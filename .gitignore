@@ -31,3 +31,8 @@ build/
 
 ### VS Code ###
 .vscode/
+/src/medIt-front/node_modules/
+/src/medIt-front/node_modules/
+/src/medIt-front/node_modules/
+/src/medIt-front/.angular/cache/
+/src/medIt-front/node_modules/
