@@ -1,67 +1,131 @@
-<div class="flex items-center justify-center min-h-screen bg-gray-100">
-  <div class="max-w-md w-full  space-y-8 p-10 bg-white  rounded-xl shadow-lg">
-    <div class="text-center">
-      <div class="flex justify-center">
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 text-blue-600" fill="none" viewBox="0 0 24 24"
-          stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-            d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
-        </svg>
-      </div>
-      <h2 class="mt-6 text-3xl font-extrabold text-gray-900">
-        Doctor's Office Portal
-      </h2>
-      <p class="mt-2 text-sm text-gray-600">
-        Please sign in to access your account
-      </p>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MediCare - Login</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        .bg-medical {
+            background-image: url('https://images.unsplash.com/photo-1576091160550-2173dba999ef?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80');
+            background-size: cover;
+            background-position: center;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans">
+    <div class="min-h-screen flex flex-col lg:flex-row">
+        <!-- Left Side - Medical Image -->
+        <div class="lg:w-1/2 bg-medical flex items-center justify-center p-12 text-white relative">
+            <div class="absolute inset-0 bg-blue-800 opacity-75"></div>
+            <div class="relative z-10 text-center max-w-md">
+                <h1 class="text-4xl font-bold mb-4">MediCare Clinic</h1>
+                <p class="text-xl mb-8">Comprehensive healthcare management system for modern medical practices</p>
+                <div class="flex items-center justify-center space-x-4">
+                    <div class="w-12 h-12 rounded-full bg-blue-600 flex items-center justify-center">
+                        <i class="fas fa-user-md text-xl"></i>
+                    </div>
+                    <div class="w-12 h-12 rounded-full bg-blue-600 flex items-center justify-center">
+                        <i class="fas fa-procedures text-xl"></i>
+                    </div>
+                    <div class="w-12 h-12 rounded-full bg-blue-600 flex items-center justify-center">
+                        <i class="fas fa-file-medical text-xl"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Side - Login Form -->
+        <div class="lg:w-1/2 flex items-center justify-center p-8 sm:p-12 lg:p-24">
+            <div class="w-full max-w-md">
+                <div class="text-center mb-8">
+                    <img src="https://via.placeholder.com/150x50?text=MediCare" alt="Logo" class="h-12 mx-auto mb-4">
+                    <h2 class="text-3xl font-bold text-gray-800">Welcome Back</h2>
+                    <p class="text-gray-600 mt-2">Sign in to your account</p>
+                </div>
+
+                <!-- Login Form -->
+                <form class="bg-white rounded-lg shadow-md p-8">
+                    <div class="mb-6">
+                        <label for="email" class="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
+                        <div class="relative">
+                            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                <i class="fas fa-envelope text-gray-400"></i>
+                            </div>
+                            <input type="email" id="email" class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="your@email.com">
+                        </div>
+                    </div>
+
+                    <div class="mb-6">
+                        <label for="password" class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                        <div class="relative">
+                            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                <i class="fas fa-lock text-gray-400"></i>
+                            </div>
+                            <input type="password" id="password" class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="••••••••">
+                            <div class="absolute inset-y-0 right-0 pr-3 flex items-center">
+                                <button type="button" class="text-gray-400 hover:text-gray-500 focus:outline-none">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center justify-between mb-6">
+                        <div class="flex items-center">
+                            <input id="remember-me" name="remember-me" type="checkbox" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                            <label for="remember-me" class="ml-2 block text-sm text-gray-700">Remember me</label>
+                        </div>
+                        <div class="text-sm">
+                            <a href="#" class="font-medium text-blue-600 hover:text-blue-500">Forgot password?</a>
+                        </div>
+                    </div>
+
+                    <button (click)="login()" type="submit" class="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                        Sign In
+                    </button>
+                </form>
+
+                <!-- Role Selection (Visible on mobile) -->
+                <div class="mt-6 lg:hidden">
+                    <div class="relative">
+                        <select class="block appearance-none w-full bg-gray-100 border border-gray-300 text-gray-700 py-3 px-4 pr-8 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                            <option>I'm a Doctor</option>
+                            <option>I'm a Nurse</option>
+                            <option>I'm Staff</option>
+                            <option>I'm a Patient</option>
+                        </select>
+                        <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
+                            <i class="fas fa-chevron-down"></i>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Role Buttons (Visible on desktop) -->
+                <div class="hidden lg:block mt-8">
+                    <div class="grid grid-cols-2 gap-4">
+                        <button class="py-2 px-4 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 flex items-center justify-center">
+                            <i class="fas fa-user-md mr-2 text-blue-500"></i> Doctor Login
+                        </button>
+                        <button class="py-2 px-4 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 flex items-center justify-center">
+                            <i class="fas fa-user-nurse mr-2 text-green-500"></i> Nurse Login
+                        </button>
+                    </div>
+                </div>
+
+                <div class="mt-8 text-center text-sm text-gray-600">
+                    <p>Don't have an account? <a href="#" class="font-medium text-blue-600 hover:text-blue-500">Contact administrator</a></p>
+                </div>
+
+                <!-- Security Badges -->
+                <div class="mt-8 flex items-center justify-center space-x-6">
+                    <i class="fas fa-shield-alt text-gray-400" title="HIPAA Compliant"></i>
+                    <i class="fas fa-lock text-gray-400" title="256-bit Encryption"></i>
+                    <i class="fas fa-fingerprint text-gray-400" title="Two-Factor Authentication"></i>
+                </div>
+            </div>
+        </div>
     </div>
-
-    <form class="mt-8 space-y-6" action="#" method="POST">
-      <input type="hidden" name="remember" value="true">
-      <div class="rounded-md shadow-sm space-y-4">
-        <div>
-          <label for="email" class="sr-only">Email address</label>
-          <input id="email" name="email" type="email" autocomplete="email" required
-            class="appearance-none relative block w-full px-3 py-3 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-lg focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
-            placeholder="Email address">
-        </div>
-        <div>
-          <label for="password" class="sr-only">Password</label>
-          <input id="password" name="password" type="password" autocomplete="current-password" required
-            class="appearance-none relative block w-full px-3 py-3 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-lg focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
-            placeholder="Password">
-        </div>
-      </div>
-
-      <div class="flex items-center justify-between">
-        <div class="flex items-center">
-          <input id="remember-me" name="remember-me" type="checkbox"
-            class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-          <label for="remember-me" class="ml-2 block text-sm text-gray-900">
-            Remember me
-          </label>
-        </div>
-
-        <div class="text-sm">
-          <a href="#" class="font-medium text-blue-600 hover:text-blue-500">
-            Forgot your password?
-          </a>
-        </div>
-      </div>
-
-      <div>
-        <button type="submit"
-          class="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
-          Sign in
-        </button>
-      </div>
-    </form>
-
-    <div class="text-center text-sm text-gray-500">
-      Not registered yet?
-      <a href="#" class="font-medium text-blue-600 hover:text-blue-500">
-        Contact administrator
-      </a>
-    </div>
-  </div>
-</div>
+</body>
+</html>

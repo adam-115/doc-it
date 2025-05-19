@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Med-It</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="bg-gray-100 font-sans flex flex-col min-h-screen">
+  <!-- Header -->
+  <!-- <app-header></app-header> -->
+  <!-- Main Content with Sidebar -->
+  <div class="flex">
+    <!-- Left Sidebar -->
+     <div class="w-48">
+       <app-left-bar></app-left-bar>
+     </div>
+    <!-- Main Content Area -->
+     <div class=" w-full overflow-hidden  bg-white shadow-md border-gray-200 ">
+       <!-- <app-appointments></app-appointments> -->
+       <router-outlet></router-outlet>
+     </div>
+
+  </div>
+  <!-- Footer -->
+  <app-footer></app-footer>
+</body>
+</html>

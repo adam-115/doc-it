@@ -1,40 +1,55 @@
 {
-  "hash": "19384f21",
-  "configHash": "7a16fd0e",
-  "lockfileHash": "9ac56f85",
-  "browserHash": "7d4c586b",
+  "hash": "d76a59fd",
+  "configHash": "b2670125",
+  "lockfileHash": "cdca89a0",
+  "browserHash": "8b855da7",
   "optimized": {
     "@angular/core": {
       "src": "../../../../../../node_modules/@angular/core/fesm2022/core.mjs",
       "file": "@angular_core.js",
-      "fileHash": "c11c7bad",
+      "fileHash": "409def9f",
+      "needsInterop": false
+    },
+    "@angular/forms": {
+      "src": "../../../../../../node_modules/@angular/forms/fesm2022/forms.mjs",
+      "file": "@angular_forms.js",
+      "fileHash": "21f2cfcf",
       "needsInterop": false
     },
     "@angular/platform-browser": {
       "src": "../../../../../../node_modules/@angular/platform-browser/fesm2022/platform-browser.mjs",
       "file": "@angular_platform-browser.js",
-      "fileHash": "91163e43",
+      "fileHash": "0548b9b8",
       "needsInterop": false
     },
     "@angular/router": {
       "src": "../../../../../../node_modules/@angular/router/fesm2022/router.mjs",
       "file": "@angular_router.js",
-      "fileHash": "320d8a5b",
+      "fileHash": "50ec2a9b",
+      "needsInterop": false
+    },
+    "@fortawesome/angular-fontawesome": {
+      "src": "../../../../../../node_modules/@fortawesome/angular-fontawesome/fesm2022/angular-fontawesome.mjs",
+      "file": "@fortawesome_angular-fontawesome.js",
+      "fileHash": "7895175c",
       "needsInterop": false
     },
     "flowbite": {
       "src": "../../../../../../node_modules/flowbite/lib/esm/index.js",
       "file": "flowbite.js",
-      "fileHash": "a1ce84e9",
+      "fileHash": "fef58db3",
       "needsInterop": false
     }
   },
   "chunks": {
-    "chunk-OUYRQV2O": {
-      "file": "chunk-OUYRQV2O.js"
+    "chunk-KXJIWDBU": {
+      "file": "chunk-KXJIWDBU.js"
     },
-    "chunk-2CZA2BYL": {
-      "file": "chunk-2CZA2BYL.js"
+    "chunk-MMAPD5CN": {
+      "file": "chunk-MMAPD5CN.js"
+    },
+    "chunk-H7527CLT": {
+      "file": "chunk-H7527CLT.js"
     },
     "chunk-WDMUDEB6": {
       "file": "chunk-WDMUDEB6.js"

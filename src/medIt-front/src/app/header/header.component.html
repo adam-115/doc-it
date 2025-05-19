@@ -1,0 +1,55 @@
+<!-- Header -->
+<header class="bg-blue-600 text-white shadow-md">
+  <div class="container mx-auto px-4 py-4 flex justify-between items-center">
+    <div class="flex items-center space-x-4">
+      <h1 class="text-2xl font-bold">Doc-It</h1>
+      <nav class="hidden md:flex space-x-6">
+        <a href="#" class="hover:text-blue-200 transition">Home</a>
+        <a href="#" class="hover:text-blue-200 transition">About</a>
+        <a href="#" class="hover:text-blue-200 transition">Services</a>
+        <a href="#" class="hover:text-blue-200 transition">Contact</a>
+      </nav>
+    </div>
+    <div class="flex items-center space-x-4">
+      <!-- <button class="bg-blue-700 hover:bg-blue-800 px-4 py-2 rounded-md transition">
+              Sign In
+          </button> -->
+      <img id="avatarButton" type="button" data-dropdown-toggle="userDropdown" data-dropdown-placement="bottom-start"
+        class="w-12 h-12 rounded-full  cursor-pointer"
+        src="data:image/png;base64,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"
+        alt="User dropdown">
+
+      <!-- Drop Down -->
+      <div id="userDropdown"
+        class="z-10 hidden bg-white divide-y divide-gray-100 rounded-lg shadow-sm w-44 dark:bg-gray-700 dark:divide-gray-600">
+        <div class="px-4 py-3 text-sm text-gray-900 dark:text-white">
+          <div>Laftimi adam</div>
+          <div class="font-medium truncate">adam.laftimi.com</div>
+        </div>
+        <ul class="py-2 text-sm text-gray-700 dark:text-gray-200" aria-labelledby="avatarButton">
+          <li>
+            <a href="#"
+              class="block px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-600 dark:hover:text-white">Dashboard</a>
+          </li>
+          <li>
+            <a href="#"
+              class="block px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-600 dark:hover:text-white">Settings</a>
+          </li>
+          <li>
+            <a href="#"
+              class="block px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-600 dark:hover:text-white">Earnings</a>
+          </li>
+        </ul>
+        <div class="py-1">
+          <a href="#"
+            class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 dark:text-gray-200 dark:hover:text-white">Signout</a>
+        </div>
+      </div>
+      <button class="md:hidden">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+      </button>
+    </div>
+  </div>
+</header>

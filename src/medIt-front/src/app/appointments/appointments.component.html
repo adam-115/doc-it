@@ -1,0 +1,89 @@
+<!-- Main Content Area -->
+<div class="flex-1 p-6">
+  <div class="bg-white rounded-lg shadow-md p-6">
+    <h2 class="text-2xl  text-gray-800 mb-4">Welcome to Your Dashboard , Today is : <span
+        class="text-2xl font-bold text-blue-600"> {{todayDate}}</span></h2>
+    <p class="text-gray-600 mb-6">Here's what's happening with your projects today.</p>
+
+    <div class="grid md:grid-cols-3 gap-6 mb-8">
+      <div class="bg-white grid grid-cols-3 p-4 rounded-lg border border-blue-100">
+        <div class="col-span-3">
+          <h3 class="font-bold text-blue-600 mb-2">Patients</h3>
+        </div>
+        <div>
+          <h3 class="font-semibold text-green-500 mb-2">Passed</h3>
+          <p class="text-3xl font-bold text-green-500">10</p>
+        </div>
+        <div>
+          <h3 class="font-semibold text-blue-500 mb-2">Wating</h3>
+          <p class="text-3xl font-bold text-blue-500">5</p>
+        </div>
+        <div>
+          <h3 class="font-semibold text-red-500 mb-2">Canceled</h3>
+          <p class="text-3xl font-bold text-red-600">2</p>
+        </div>
+      </div>
+      <div class=" p-4 grid grid-cols-3 rounded-lg border border-green-100">
+        <h3 class="font-semibold col-span-3 text-green-800 mb-2">Today Tasks</h3>
+        <div>
+          <h3 class="font-semibold text-green-500 mb-2">Done</h3>
+          <p class="text-3xl font-bold text-green-600">24</p>
+        </div>
+        <div>
+          <h3 class="font-semibold text-red-500 mb-2">Waiting </h3>
+          <p class="text-3xl font-bold text-red-600">4</p>
+        </div>
+        <div>
+          <h3 class="font-semibold text-blue-500 mb-2">New </h3>
+          <p class="text-3xl font-bold text-blue-600">4</p>
+        </div>
+
+      </div>
+      <div class="p-4 rounded-lg border border-purple-100">
+        <h3 class="font-semibold items-center text-purple-800 mb-2">Messages</h3>
+        <p class="text-3xl font-bold items-center text-purple-600">3</p>
+      </div>
+    </div>
+
+    <div class="border-t pt-6">
+      <h3 class="text-xl font-semibold text-gray-800 mb-4">Recent Projects</h3>
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Project
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Due Date
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Team</th>
+            </tr>
+          </thead>
+          <tbody class="bg-white divide-y divide-gray-200">
+            <tr>
+              <td class="px-6 py-4 whitespace-nowrap">Website Redesign</td>
+              <td class="px-6 py-4 whitespace-nowrap"><span
+                  class="px-2 py-1 text-sm bg-green-100 text-green-800 rounded-full">Completed</span></td>
+              <td class="px-6 py-4 whitespace-nowrap">May 15, 2023</td>
+              <td class="px-6 py-4 whitespace-nowrap">5 members</td>
+            </tr>
+            <tr>
+              <td class="px-6 py-4 whitespace-nowrap">Mobile App Development</td>
+              <td class="px-6 py-4 whitespace-nowrap"><span
+                  class="px-2 py-1 text-sm bg-blue-100 text-blue-800 rounded-full">In Progress</span></td>
+              <td class="px-6 py-4 whitespace-nowrap">June 30, 2023</td>
+              <td class="px-6 py-4 whitespace-nowrap">3 members</td>
+            </tr>
+            <tr>
+              <td class="px-6 py-4 whitespace-nowrap">Marketing Campaign</td>
+              <td class="px-6 py-4 whitespace-nowrap"><span
+                  class="px-2 py-1 text-sm bg-yellow-100 text-yellow-800 rounded-full">Pending</span></td>
+              <td class="px-6 py-4 whitespace-nowrap">July 10, 2023</td>
+              <td class="px-6 py-4 whitespace-nowrap">4 members</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>

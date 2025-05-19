@@ -1,0 +1,7 @@
+{
+  "version": 3,
+  "sources": ["login.component.html"],
+  "sourcesContent": ["\n        .bg-medical {\n            background-image: url('https://images.unsplash.com/photo-1576091160550-2173dba999ef?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80');\n            background-size: cover;\n            background-position: center;\n        }\n    "],
+  "mappings": ";AACQ,CAAA;AACI,oBAAA;AACA,mBAAA;AACA,uBAAA;AACJ;",
+  "names": []
+}
