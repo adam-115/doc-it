@@ -1,0 +1,62 @@
+<div class="m-10 mb-10">
+  <div class="flex justify-between items-center mb-4">
+    <div>
+      <button (click)="previousWeek()" type="submit"
+        class="px-4 py-2 bg-blue-700 text-white rounded-md hover:bg-blue-500 focus:outline-none cursor-pointer focus:ring-2 ">
+        Pervious
+      </button>
+    </div>
+
+    <div (click)="moveToTodayDate()" class="text-xl cursor-pointer text-blue-700  font-semibold">
+      <h2>
+        {{ todayDate | date: 'dd MMMM yyyy' }}
+      </h2>
+
+      <div class="text-center text-gray-500">
+        {{weekDays[0].dateObj |date:'MMMM'}}/{{weekDays[0].dateObj |date:'YY'}}
+      </div>
+    </div>
+    <div>
+      <button (click)="nextWeek()" type="submit"
+        class="px-4 py-2 bg-blue-700 text-white rounded-md hover:bg-blue-500 focus:outline-none focus:ring-2 cursor-pointer">
+        Next
+      </button>
+    </div>
+  </div>
+  <div>
+    <hr>
+  </div>
+
+
+
+  <div  class="grid grid-cols-8 mt-2">
+    <div class="col-start-1 col-end-2 border-1   bg-blue-700 ">
+      <div class="h-16 flex justify-center align-content-center align-content-center text-white   font-semibold">
+        Time
+      </div>
+      <div>
+        @for (item of timesPeriod; track $index) {
+        <div class="bg-yellow-100 text-center fex justify-center align-middle h-10 border">
+          {{item.timeStart}}-{{item.timeEnd}}
+        </div>
+        }
+      </div>
+    </div>
+
+
+    @for (appday of weekDays; track $index) {
+    <div [className]="'col-start-'+$index+2+ 'col-end-'+$index+3+' border-1  bg-blue-700'">
+      <div class="h-14">
+        <div class="text-center font-semibold  text-white">{{appday.dayName}}</div>
+        <div class="text-center font-semibold text-white">{{appday.date | date:'dd'}}</div>
+      </div>
+      <div>
+        <app-adm-day-view-calendar [dayDate]="appday.dateObj"></app-adm-day-view-calendar>
+      </div>
+    </div>
+    }
+
+
+  </div>
+
+</div>

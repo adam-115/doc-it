@@ -1,0 +1,207 @@
+
+    <div class="flex h-screen overflow-hidden">
+
+        <!-- Main Content -->
+        <div class="flex flex-col flex-1 overflow-hidden">
+            <!-- Top Navigation -->
+            <header class="flex items-center justify-between px-6 py-4 bg-white border-b border-gray-200">
+                <div class="flex items-center">
+                    <button class="md:hidden mr-4 text-gray-500">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                    <h1 class="text-xl font-semibold text-gray-800">Add New Patient</h1>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <button class="p-2 text-gray-500 rounded-full hover:bg-gray-100">
+                        <i class="fas fa-question-circle"></i>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Main Content Area -->
+            <main class="flex-1 overflow-y-auto p-6 bg-gray-100">
+                <div class="max-w-4xl mx-auto">
+                    <!-- Progress Steps -->
+                    <div class="mb-8">
+                        <nav class="flex items-center justify-center">
+                            <ol class="flex items-center space-x-8">
+                                <li class="flex items-center space-x-3">
+                                    <div class="flex items-center justify-center w-8 h-8 rounded-full bg-blue-600 text-white">
+                                        1
+                                    </div>
+                                    <span class="font-medium text-blue-600">Personal Information</span>
+                                </li>
+                                <li class="flex items-center space-x-3">
+                                    <div class="flex items-center justify-center w-8 h-8 rounded-full bg-gray-200 text-gray-600">
+                                        2
+                                    </div>
+                                    <span class="font-medium text-gray-500">Medical History</span>
+                                </li>
+                                <li class="flex items-center space-x-3">
+                                    <div class="flex items-center justify-center w-8 h-8 rounded-full bg-gray-200 text-gray-600">
+                                        3
+                                    </div>
+                                    <span class="font-medium text-gray-500">Confirmation</span>
+                                </li>
+                            </ol>
+                        </nav>
+                    </div>
+
+                    <!-- Form Container -->
+                    <div class="bg-white rounded-lg shadow overflow-hidden">
+                        <div class="p-8">
+                            <h2 class="text-2xl font-bold text-gray-800 mb-6">Patient Personal Information</h2>
+
+                            <!-- Photo Upload -->
+                            <div class="mb-8">
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Patient Photo</label>
+                                <div class="flex items-center">
+                                    <div class="flex-shrink-0 h-24 w-24 rounded-full bg-gray-200 flex items-center justify-center overflow-hidden">
+                                        <i class="fas fa-user text-gray-400 text-3xl"></i>
+                                    </div>
+                                    <div class="ml-6">
+                                        <label class="cursor-pointer">
+                                            <span class="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                                                <i class="fas fa-upload mr-2"></i> Upload Photo
+                                            </span>
+                                            <input type="file" class="sr-only" accept="image/*">
+                                        </label>
+                                        <p class="mt-2 text-xs text-gray-500">JPG, PNG or GIF (Max 2MB)</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Personal Information Form -->
+                            <form class="space-y-6">
+                                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                    <div>
+                                        <label for="first-name" class="block text-sm font-medium text-gray-700 mb-1">First Name *</label>
+                                        <input type="text" id="first-name" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                                    </div>
+                                    <div>
+                                        <label for="last-name" class="block text-sm font-medium text-gray-700 mb-1">Last Name *</label>
+                                        <input type="text" id="last-name" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                                    </div>
+                                    <div>
+                                      <label for="CIN" class="block text-sm font-medium text-gray-700 mb-1">CIN *</label>
+                                      <input type="text" id="last-name" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                                  </div>
+                                </div>
+
+                                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                    <div>
+                                        <label for="gender" class="block text-sm font-medium text-gray-700 mb-1">Gender *</label>
+                                        <select id="gender" class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">
+                                            <option value="">Select Gender</option>
+                                            <option value="male">Male</option>
+                                            <option value="female">Female</option>
+                                            <option value="other">Other</option>
+                                            <option value="undisclosed">Prefer not to say</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label for="dob" class="block text-sm font-medium text-gray-700 mb-1">Date of Birth *</label>
+                                        <input type="date" id="dob" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                                    </div>
+                                    <div>
+                                        <label for="blood-type" class="block text-sm font-medium text-gray-700 mb-1">Blood Type</label>
+                                        <select id="blood-type" class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">
+                                            <option value="">Unknown</option>
+                                            <option value="A+">A+</option>
+                                            <option value="A-">A-</option>
+                                            <option value="B+">B+</option>
+                                            <option value="B-">B-</option>
+                                            <option value="AB+">AB+</option>
+                                            <option value="AB-">AB-</option>
+                                            <option value="O+">O+</option>
+                                            <option value="O-">O-</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label for="email" class="block text-sm font-medium text-gray-700 mb-1">Email Address *</label>
+                                    <input type="email" id="email" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                                </div>
+
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div>
+                                        <label for="phone" class="block text-sm font-medium text-gray-700 mb-1">Phone Number *</label>
+                                        <input type="tel" id="phone" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                                    </div>
+                                    <div>
+                                        <label for="mobile" class="block text-sm font-medium text-gray-700 mb-1">Mobile Number</label>
+                                        <input type="tel" id="mobile" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label for="address" class="block text-sm font-medium text-gray-700 mb-1">Street Address *</label>
+                                    <input type="text" id="address" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                                </div>
+
+                                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                    <div>
+                                        <label for="city" class="block text-sm font-medium text-gray-700 mb-1">City *</label>
+                                        <input type="text" id="city" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                                    </div>
+                                    <div>
+                                        <label for="state" class="block text-sm font-medium text-gray-700 mb-1">State/Province *</label>
+                                        <input type="text" id="state" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                                    </div>
+                                    <div>
+                                        <label for="zip" class="block text-sm font-medium text-gray-700 mb-1">ZIP/Postal Code *</label>
+                                        <input type="text" id="zip" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label for="country" class="block text-sm font-medium text-gray-700 mb-1">Country *</label>
+                                    <select id="country" class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">
+                                        <option value="">Select Country</option>
+                                        <option value="US">United States</option>
+                                        <option value="CA">Canada</option>
+                                        <option value="UK">United Kingdom</option>
+                                        <!-- More countries would be added here -->
+                                    </select>
+                                </div>
+
+                                <div class="pt-4 border-t border-gray-200">
+                                    <h3 class="text-lg font-medium text-gray-900 mb-4">Emergency Contact</h3>
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                        <div>
+                                            <label for="emergency-name" class="block text-sm font-medium text-gray-700 mb-1">Full Name *</label>
+                                            <input type="text" id="emergency-name" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                                        </div>
+                                        <div>
+                                            <label for="emergency-relation" class="block text-sm font-medium text-gray-700 mb-1">Relationship *</label>
+                                            <input type="text" id="emergency-relation" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                                        </div>
+                                    </div>
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+                                        <div>
+                                            <label for="emergency-phone" class="block text-sm font-medium text-gray-700 mb-1">Phone Number *</label>
+                                            <input type="tel" id="emergency-phone" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                                        </div>
+                                        <div>
+                                            <label for="emergency-email" class="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
+                                            <input type="email" id="emergency-email" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="flex justify-end pt-6 border-t border-gray-200 space-x-3">
+                                    <button type="button" class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                                        Cancel
+                                    </button>
+                                    <button type="button" (click)="navigateToNewMedicalHistory()" class="px-4 py-2 border border-transparent rounded-lg text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                                        Next: Medical History <i class="fas fa-arrow-right ml-2"></i>
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>

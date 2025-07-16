@@ -1,11 +1,15 @@
 <!-- Left Sidebar -->
-<div class="hidden md:flex md:flex-shrink-0">
-  <div class="flex flex-col h-screen w-64 bg-blue-800 text-white">
+<div class="hidden h-full md:flex md:flex-shrink-0">
+  <div class="flex flex-col h-full w-66 bg-blue-800 text-white">
     <div class="flex items-center justify-center h-16 px-4 bg-blue-900">
       <span class="text-xl font-semibold">MediCare</span>
     </div>
     <div class="flex flex-col flex-grow px-4 py-4 ">
       <nav class="flex-1 space-y-2">
+        <a href="/home/calendar" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-blue-700">
+          <i class="fas fa-calendar-check mr-3"></i>
+          Calendar
+        </a>
         <a href="/home" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg bg-blue-700">
           <i class="fas fa-tachometer-alt mr-3"></i>
           Dashboard
@@ -14,7 +18,7 @@
           <i class="fas fa-calendar-check mr-3"></i>
           Appointments
         </a>
-        <a href="/home/new-patient" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-blue-700">
+        <a href="/home/patient" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-blue-700">
           <i class="fas fa-users mr-3"></i>
           Patients
         </a>

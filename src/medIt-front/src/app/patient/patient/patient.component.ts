@@ -1,6 +1,8 @@
-import { Component } from '@angular/core';
-import { FormBuilder, FormGroup, Validators } from '@angular/forms';
+import { AfterViewInit, Component, ElementRef, ViewChild } from '@angular/core';
 import { ReactiveFormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
+import type { InstanceOptions, ModalInterface, ModalOptions } from 'flowbite';
+import { initFlowbite, Modal } from 'flowbite';
 
 
 
@@ -10,52 +12,60 @@ import { ReactiveFormsModule } from '@angular/forms';
   templateUrl: './patient.component.html',
   styleUrl: './patient.component.css'
 })
-export class PatientComponent {
-  patientForm: FormGroup=new FormGroup({});
-  bloodTypes = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
-  genders = ['Male', 'Female', 'Other', 'Prefer not to say'];
+export class PatientComponent implements AfterViewInit {
 
-  constructor(private fb: FormBuilder) {
+  @ViewChild('newPatientModal')
+  newPatientModalRef!: ElementRef;
+  newPatientModal: ModalInterface | null = null;
 
-    this.patientForm = this.fb.group({
-      personalInfo: this.fb.group({
-        firstName: ['', Validators.required],
-        lastName: ['', Validators.required],
-        dob: ['', Validators.required],
-        gender: ['', Validators.required],
-        cin: ['', [Validators.required]],
-      }),
-      contactInfo: this.fb.group({
-        email: ['', [Validators.required, Validators.email]],
-        phone: ['', Validators.required],
-        address: ['', Validators.required],
-        city: ['', Validators.required],
-        state: ['', Validators.required],
-        zipCode: ['', Validators.required],
-      }),
-      medicalInfo: this.fb.group({
-        bloodType: [''],
-        allergies: [''],
-        medications: [''],
-        conditions: [''],
-        insuranceProvider: [''],
-        insuranceId: [''],
-      }),
-      emergencyContact: this.fb.group({
-        name: ['', Validators.required],
-        relationship: ['', Validators.required],
-        phone: ['', Validators.required],
-      })
-    });
+  constructor(private router:Router) {
+
   }
 
-  onSubmit() {
-    if (this.patientForm.valid) {
-      console.log('Form submitted:', this.patientForm.value);
-      // Add your form submission logic here
-    } else {
-      this.patientForm.markAllAsTouched();
+
+  ngAfterViewInit(): void {
+    let modalOptions: ModalOptions = {
+      placement: 'center',
+      backdrop: 'static',
+
+      backdropClasses:
+        'bg-gray-900/50 dark:bg-gray-900/80 fixed inset-0 z-40',
+      closable: true,
+      onHide: () => {
+        console.log('modal is hidden');
+      },
+      onShow: () => {
+        console.log('modal is shown');
+      },
+      onToggle: () => {
+        console.log('modal has been toggled');
+      },
+    };
+
+    // instance options object
+    const instanceOptions: InstanceOptions = {
+      id: 'modalEl22',
+      override: true
+    };
+    let nnElement = this.newPatientModalRef.nativeElement
+    this.newPatientModal = new Modal(nnElement, modalOptions, instanceOptions);
+  }
+
+  ngOnInit(): void {
+    initFlowbite();
+
+  }
+
+  newPatient(): void {
+    this.router.navigate(['/home/new-patient']);
+    // if (this.newPatientModal) {
+    //   this.newPatientModal.show();
+    // }
+  }
+
+  closeModal(): void {
+    if (this.newPatientModal) {
+      this.newPatientModal.hide();
     }
   }
-
 }

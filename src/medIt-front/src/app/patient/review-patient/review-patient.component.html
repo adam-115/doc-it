@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Patient Review</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
+</head>
+
+<body class="bg-gray-50 font-sans">
+  <div class="container mx-auto px-4 py-8">
+    <!-- Header -->
+    <div class="mb-8">
+      <nav class="flex items-center justify-center">
+        <ol class="flex items-center space-x-8">
+          <li class="flex items-center space-x-3">
+            <div class="flex items-center justify-center w-8 h-8 rounded-full bg-gray-200 text-gray-600">
+              1
+            </div>
+            <span class="font-medium ">Personal Information</span>
+          </li>
+          <li class="flex items-center space-x-3">
+            <div class="flex items-center justify-center w-8 h-8 rounded-full bg-gray-200 text-gray-600">
+              2
+            </div>
+            <span class="font-medium ">Medical History</span>
+          </li>
+          <li class="flex items-center space-x-3">
+            <div class="flex items-center justify-center w-8 h-8 rounded-full bg-blue-600 text-white">
+              3
+            </div>
+            <span class="font-medium text-gray-500">Confirmaion</span>
+          </li>
+
+        </ol>
+      </nav>
+    </div>
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-8">
+      <div>
+        <h1 class="text-3xl font-bold text-blue-800">Patient Review</h1>
+        <p class="text-gray-600">Verify patient information before submission</p>
+      </div>
+      <div class="flex items-center space-x-4">
+        <span class="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">Pending Review</span>
+        <button class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center">
+          <i class="fas fa-print mr-2"></i> Print
+        </button>
+      </div>
+    </div>
+
+    <!-- Review Sections -->
+    <div class="space-y-6">
+      <!-- Patient Information Card -->
+      <div class="bg-white rounded-xl shadow-md overflow-hidden">
+        <div class="border-b border-gray-200 px-6 py-4 flex justify-between items-center">
+          <h3 class="text-lg font-semibold text-gray-800">Patient Information</h3>
+          <button class="text-blue-600 hover:text-blue-800 text-sm">
+            <i class="fas fa-edit mr-1"></i> Edit
+          </button>
+        </div>
+        <div class="p-6">
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <p class="text-sm text-gray-500">Full Name</p>
+              <p class="font-medium">John Michael Doe</p>
+            </div>
+            <div>
+              <p class="text-sm text-gray-500">Date of Birth</p>
+              <p class="font-medium">May 15, 1985 (38 years)</p>
+            </div>
+            <div>
+              <p class="text-sm text-gray-500">Gender</p>
+              <p class="font-medium">Male</p>
+            </div>
+            <div>
+              <p class="text-sm text-gray-500">Patient ID</p>
+              <p class="font-medium">P-123456</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Medical History Summary -->
+      <div class="bg-white rounded-xl shadow-md overflow-hidden">
+        <div class="border-b border-gray-200 px-6 py-4 flex justify-between items-center">
+          <h3 class="text-lg font-semibold text-gray-800">Medical History Summary</h3>
+          <button class="text-blue-600 hover:text-blue-800 text-sm">
+            <i class="fas fa-edit mr-1"></i> Edit
+          </button>
+        </div>
+        <div class="p-6">
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <!-- Conditions -->
+            <div>
+              <h4 class="font-medium text-gray-700 mb-3 flex items-center">
+                <i class="fas fa-disease text-blue-500 mr-2"></i> Conditions
+              </h4>
+              <ul class="space-y-2">
+                <li class="flex items-start">
+                  <span class="text-green-500 mr-2">•</span>
+                  <span>Type 2 Diabetes (2018)</span>
+                </li>
+                <li class="flex items-start">
+                  <span class="text-green-500 mr-2">•</span>
+                  <span>Hypertension (2019)</span>
+                </li>
+                <li class="flex items-start">
+                  <span class="text-green-500 mr-2">•</span>
+                  <span>Hyperlipidemia (2020)</span>
+                </li>
+              </ul>
+            </div>
+
+            <!-- Allergies -->
+            <div>
+              <h4 class="font-medium text-gray-700 mb-3 flex items-center">
+                <i class="fas fa-allergy text-red-500 mr-2"></i> Allergies
+              </h4>
+              <ul class="space-y-2">
+                <li class="flex items-start">
+                  <span class="text-red-500 mr-2">•</span>
+                  <span>Penicillin (Severe)</span>
+                </li>
+                <li class="flex items-start">
+                  <span class="text-yellow-500 mr-2">•</span>
+                  <span>Sulfa Drugs (Moderate)</span>
+                </li>
+              </ul>
+            </div>
+
+            <!-- Medications -->
+            <div>
+              <h4 class="font-medium text-gray-700 mb-3 flex items-center">
+                <i class="fas fa-pills text-purple-500 mr-2"></i> Medications
+              </h4>
+              <ul class="space-y-2">
+                <li class="flex items-start">
+                  <span class="text-purple-500 mr-2">•</span>
+                  <span>Lisinopril 10mg daily</span>
+                </li>
+                <li class="flex items-start">
+                  <span class="text-purple-500 mr-2">•</span>
+                  <span>Atorvastatin 20mg daily</span>
+                </li>
+                <li class="flex items-start">
+                  <span class="text-purple-500 mr-2">•</span>
+                  <span>Metformin 500mg twice daily</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- New Entries Review -->
+      <div class="bg-white rounded-xl shadow-md overflow-hidden">
+        <div class="border-b border-gray-200 px-6 py-4">
+          <h3 class="text-lg font-semibold text-gray-800">New Entries to Be Added</h3>
+        </div>
+        <div class="p-6">
+          <!-- Vital Signs -->
+          <div class="mb-6">
+            <h4 class="font-medium text-gray-700 mb-3 flex items-center">
+              <i class="fas fa-heartbeat text-blue-500 mr-2"></i> Vital Signs
+            </h4>
+            <div class="bg-blue-50 p-4 rounded-lg">
+              <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div>
+                  <p class="text-sm text-gray-500">Blood Pressure</p>
+                  <p class="font-medium">128/82 mmHg</p>
+                </div>
+                <div>
+                  <p class="text-sm text-gray-500">Heart Rate</p>
+                  <p class="font-medium">72 bpm</p>
+                </div>
+                <div>
+                  <p class="text-sm text-gray-500">Temperature</p>
+                  <p class="font-medium">36.8 °C</p>
+                </div>
+                <div>
+                  <p class="text-sm text-gray-500">SpO₂</p>
+                  <p class="font-medium">98%</p>
+                </div>
+              </div>
+              <div class="mt-3 text-sm text-gray-500">
+                Recorded: <span class="font-medium">Today at 10:30 AM</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- New Immunization -->
+          <div class="mb-6">
+            <h4 class="font-medium text-gray-700 mb-3 flex items-center">
+              <i class="fas fa-syringe text-green-500 mr-2"></i> New Immunization
+            </h4>
+            <div class="bg-green-50 p-4 rounded-lg">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <p class="text-sm text-gray-500">Vaccine</p>
+                  <p class="font-medium">Influenza (Seasonal 2023-2024)</p>
+                </div>
+                <div>
+                  <p class="text-sm text-gray-500">Administered</p>
+                  <p class="font-medium">Oct 15, 2023</p>
+                </div>
+                <div>
+                  <p class="text-sm text-gray-500">Lot Number</p>
+                  <p class="font-medium">FLU12345</p>
+                </div>
+                <div>
+                  <p class="text-sm text-gray-500">Administered By</p>
+                  <p class="font-medium">Dr. Sarah Johnson</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- New Family History -->
+          <div>
+            <h4 class="font-medium text-gray-700 mb-3 flex items-center">
+              <i class="fas fa-family text-purple-500 mr-2"></i> New Family History
+            </h4>
+            <div class="bg-purple-50 p-4 rounded-lg">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <p class="text-sm text-gray-500">Family Member</p>
+                  <p class="font-medium">Father</p>
+                </div>
+                <div>
+                  <p class="text-sm text-gray-500">Condition</p>
+                  <p class="font-medium">Heart Disease</p>
+                </div>
+                <div>
+                  <p class="text-sm text-gray-500">Status</p>
+                  <p class="font-medium">Deceased at age 68</p>
+                </div>
+                <div>
+                  <p class="text-sm text-gray-500">Side of Family</p>
+                  <p class="font-medium">Paternal</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Verification Section -->
+      <div class="bg-white rounded-xl shadow-md overflow-hidden">
+        <div class="border-b border-gray-200 px-6 py-4">
+          <h3 class="text-lg font-semibold text-gray-800">Verification</h3>
+        </div>
+        <div class="p-6">
+          <div class="space-y-4">
+            <div class="flex items-start">
+              <input type="checkbox" id="verifyInfo" class="mt-1 h-4 w-4 text-blue-600 focus:ring-blue-500 rounded">
+              <label for="verifyInfo" class="ml-2 block text-sm text-gray-700">
+                I have verified that all patient information is accurate and complete
+              </label>
+            </div>
+            <div class="flex items-start">
+              <input type="checkbox" id="verifyConsent" class="mt-1 h-4 w-4 text-blue-600 focus:ring-blue-500 rounded">
+              <label for="verifyConsent" class="ml-2 block text-sm text-gray-700">
+                I confirm that the patient has provided consent for this information to be recorded
+              </label>
+            </div>
+            <div class="flex items-start">
+              <input type="checkbox" id="verifyReview" class="mt-1 h-4 w-4 text-blue-600 focus:ring-blue-500 rounded">
+              <label for="verifyReview" class="ml-2 block text-sm text-gray-700">
+                I have reviewed all new entries for accuracy and completeness
+              </label>
+            </div>
+          </div>
+
+          <!-- Provider Signature -->
+          <div class="mt-6">
+            <label for="providerName" class="block text-sm font-medium text-gray-700 mb-1">Provider Name*</label>
+            <input type="text" id="providerName"
+              class="w-full md:w-1/2 px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              placeholder="Your full name">
+          </div>
+        </div>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="flex justify-between pt-6">
+        <button
+          class="px-6 py-3 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <i class="fas fa-arrow-left mr-2"></i> Back to Edit
+        </button>
+        <button
+          class="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2">
+          <i class="fas fa-check-circle mr-2"></i> Confirm and Submit
+        </button>
+      </div>
+    </div>
+  </div>
+</body>
+
+</html>

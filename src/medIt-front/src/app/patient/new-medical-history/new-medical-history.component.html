@@ -1,0 +1,345 @@
+<div class="container mx-auto px-4 py-8">
+  <!-- Header -->
+  <div class="mb-8">
+    <nav class="flex items-center justify-center">
+      <ol class="flex items-center space-x-8">
+        <li class="flex items-center space-x-3">
+          <div class="flex items-center justify-center w-8 h-8 rounded-full bg-gray-200 text-gray-600">
+            1
+          </div>
+          <span class="font-medium ">Personal Information</span>
+        </li>
+        <li class="flex items-center space-x-3">
+          <div class="flex items-center justify-center w-8 h-8 rounded-full bg-blue-600 text-white">
+            2
+          </div>
+          <span class="font-medium text-blue-600 ">Medical History</span>
+        </li>
+        <li class="flex items-center space-x-3">
+          <div class="flex items-center justify-center w-8 h-8 rounded-full bg-gray-200 text-gray-600">
+            3
+          </div>
+          <span class="font-medium text-gray-500">Confirmaion</span>
+        </li>
+
+      </ol>
+    </nav>
+  </div>
+
+  <!-- Patient Info Card -->
+  <div class="bg-white rounded-xl shadow-md overflow-hidden mb-8">
+    <div class="p-6">
+      <div class="flex items-start">
+        <div class="mr-6">
+          <div class="w-24 h-24 rounded-full bg-blue-100 flex items-center justify-center">
+            <i class="fas fa-user text-blue-500 text-4xl"></i>
+          </div>
+        </div>
+        <div class="flex-1">
+          <div class="flex justify-between items-start">
+            <div>
+              <h2 class="text-2xl font-bold text-gray-800">John Doe</h2>
+              <p class="text-gray-600">Patient ID: P-123456</p>
+            </div>
+            <div class="flex space-x-2">
+              <button (click)="navigateTOComplete()" class="px-4 py-2 bg-blue-600 text-white  rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+                <i class="font-medium mx-2 hover:p-2">Confirm</i>
+                <i class="fa-solid fa-arrow-right"></i>
+              </button>
+
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4">
+            <div>
+              <p class="text-sm text-gray-500">Date of Birth</p>
+              <p class="font-medium">May 15, 1985 (38 years)</p>
+            </div>
+            <div>
+              <p class="text-sm text-gray-500">Gender</p>
+              <p class="font-medium">Male</p>
+            </div>
+            <div>
+              <p class="text-sm text-gray-500">Blood Type</p>
+              <p class="font-medium">O+</p>
+            </div>
+            <div>
+              <p class="text-sm text-gray-500">Last Visit</p>
+              <p class="font-medium">June 12, 2023</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <!-- Left Column -->
+    <div class="lg:col-span-2 space-y-6">
+      <!-- Allergies Section -->
+      <div class="bg-white rounded-xl shadow-md overflow-hidden">
+        <div class="p-6">
+          <div class="flex justify-between items-center mb-4">
+            <h3 class="text-xl font-semibold text-gray-800">Allergies</h3>
+            <button (click)="addNewAllergy()" class="text-blue-600  hover:text-blue-800">
+              <i class="fas fa-plus mr-1"></i> Add
+            </button>
+          </div>
+          <div class="space-y-3">
+            <div class="bg-red-50 rounded-lg">
+              <div class="flex  justify-end">
+                <div class="fas fa-edit fa-xl mr-1 text-red-400 hover:text-red-500"></div>
+                <div class="fas fa-window-close fa-xl text-red-400 hover:text-red-500"></div>
+              </div>
+              <div class="flex justify-between items-center p-3 ">
+                <div>
+                  <p class="font-medium">Penicillin</p>
+                  <p class="text-sm text-gray-600">Severe: Anaphylaxis</p>
+                </div>
+                <div class="text-sm text-gray-500">Added: 05/10/2018</div>
+              </div>
+            </div>
+            <div class="flex justify-between items-center p-3 bg-yellow-50 rounded-lg">
+              <div>
+                <p class="font-medium">Sulfa Drugs</p>
+                <p class="text-sm text-gray-600">Moderate: Rash</p>
+              </div>
+              <div class="text-sm text-gray-500">Added: 02/15/2020</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Medications Section -->
+      <div class="bg-white rounded-xl shadow-md overflow-hidden">
+        <div class="p-6">
+          <div class="flex justify-between items-center mb-4">
+            <h3 class="text-xl font-semibold text-gray-800">Current Medications</h3>
+            <button (click)="addNewCurrentMedication()" class="text-blue-600 hover:text-blue-800">
+              <i class="fas fa-plus mr-1"></i> Add
+            </button>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+              <thead class="bg-gray-50">
+                <tr>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Medication
+                  </th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Dosage</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Frequency
+                  </th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Prescribed
+                  </th>
+                </tr>
+              </thead>
+              <tbody class="bg-white divide-y divide-gray-200">
+                <tr>
+                  <td class="px-4 py-3 whitespace-nowrap">Lisinopril</td>
+                  <td class="px-4 py-3 whitespace-nowrap">10 mg</td>
+                  <td class="px-4 py-3 whitespace-nowrap">Once daily</td>
+                  <td class="px-4 py-3 whitespace-nowrap">03/15/2023</td>
+                </tr>
+                <tr>
+                  <td class="px-4 py-3 whitespace-nowrap">Atorvastatin</td>
+                  <td class="px-4 py-3 whitespace-nowrap">20 mg</td>
+                  <td class="px-4 py-3 whitespace-nowrap">Once daily</td>
+                  <td class="px-4 py-3 whitespace-nowrap">01/10/2023</td>
+                </tr>
+                <tr>
+                  <td class="px-4 py-3 whitespace-nowrap">Metformin</td>
+                  <td class="px-4 py-3 whitespace-nowrap">500 mg</td>
+                  <td class="px-4 py-3 whitespace-nowrap">Twice daily</td>
+                  <td class="px-4 py-3 whitespace-nowrap">02/22/2023</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Medical History Section -->
+      <div class="bg-white rounded-xl shadow-md overflow-hidden">
+        <div class="p-6">
+          <div class="flex justify-between items-center mb-4">
+            <h3 class="text-xl font-semibold text-gray-800">Medical Conditions</h3>
+            <button (click)="addNewMedicalCondition()" class="text-blue-600 hover:text-blue-800">
+              <i class="fas fa-plus mr-1"></i> Add
+            </button>
+          </div>
+          <div class="space-y-4">
+            <div class="border-l-4 border-blue-500 pl-4 py-1">
+              <p class="font-medium">Type 2 Diabetes</p>
+              <p class="text-sm text-gray-600">Diagnosed: 2018, Managed with medication</p>
+            </div>
+            <div class="border-l-4 border-blue-500 pl-4 py-1">
+              <p class="font-medium">Hypertension</p>
+              <p class="text-sm text-gray-600">Diagnosed: 2019, Controlled</p>
+            </div>
+            <div class="border-l-4 border-blue-500 pl-4 py-1">
+              <p class="font-medium">Hyperlipidemia</p>
+              <p class="text-sm text-gray-600">Diagnosed: 2020, On statin therapy</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Visit History -->
+      <div class="bg-white rounded-xl shadow-md overflow-hidden">
+        <div class="p-6">
+          <h3 class="text-xl font-semibold text-gray-800 mb-4">Recent Visits</h3>
+          <div class="space-y-4">
+            <div class="border rounded-lg p-4 hover:bg-gray-50 cursor-pointer">
+              <div class="flex justify-between items-start">
+                <div>
+                  <p class="font-medium">Annual Physical Exam</p>
+                  <p class="text-sm text-gray-600">Dr. Sarah Johnson</p>
+                </div>
+                <span class="bg-green-100 text-green-800 text-xs px-2 py-1 rounded">Completed</span>
+              </div>
+              <p class="text-sm text-gray-500 mt-2">June 12, 2023 • 10:30 AM</p>
+            </div>
+            <div class="border rounded-lg p-4 hover:bg-gray-50 cursor-pointer">
+              <div class="flex justify-between items-start">
+                <div>
+                  <p class="font-medium">Diabetes Follow-up</p>
+                  <p class="text-sm text-gray-600">Dr. Michael Chen</p>
+                </div>
+                <span class="bg-green-100 text-green-800 text-xs px-2 py-1 rounded">Completed</span>
+              </div>
+              <p class="text-sm text-gray-500 mt-2">March 28, 2023 • 2:15 PM</p>
+            </div>
+            <div class="border rounded-lg p-4 hover:bg-gray-50 cursor-pointer">
+              <div class="flex justify-between items-start">
+                <div>
+                  <p class="font-medium">Blood Pressure Check</p>
+                  <p class="text-sm text-gray-600">Nurse Practitioner Amy Wilson</p>
+                </div>
+                <span class="bg-green-100 text-green-800 text-xs px-2 py-1 rounded">Completed</span>
+              </div>
+              <p class="text-sm text-gray-500 mt-2">January 15, 2023 • 9:00 AM</p>
+            </div>
+          </div>
+          <button
+            class="mt-4 text-blue-600 hover:text-blue-800 w-full text-center py-2 border border-dashed border-gray-300 rounded-lg">
+            <i class="fas fa-history mr-1"></i> View Full History
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Column -->
+    <div class="space-y-6">
+      <!-- Vital Stats -->
+      <div class="bg-white rounded-xl shadow-md overflow-hidden">
+        <div class="p-6">
+          <h3 class="text-xl font-semibold text-gray-800 mb-4">Vital Statistics</h3>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="bg-blue-50 p-3 rounded-lg">
+              <p class="text-sm text-gray-500">Blood Pressure</p>
+              <p class="text-2xl font-bold">128/82</p>
+              <p class="text-xs text-gray-500">Last: 06/12/2023</p>
+            </div>
+            <div class="bg-blue-50 p-3 rounded-lg">
+              <p class="text-sm text-gray-500">Heart Rate</p>
+              <p class="text-2xl font-bold">72</p>
+              <p class="text-xs text-gray-500">Last: 06/12/2023</p>
+            </div>
+            <div class="bg-blue-50 p-3 rounded-lg">
+              <p class="text-sm text-gray-500">Weight</p>
+              <p class="text-2xl font-bold">185 lbs</p>
+              <p class="text-xs text-gray-500">Last: 06/12/2023</p>
+            </div>
+            <div class="bg-blue-50 p-3 rounded-lg">
+              <p class="text-sm text-gray-500">Height</p>
+              <p class="text-2xl font-bold">5'11"</p>
+              <p class="text-xs text-gray-500">Last: 06/12/2023</p>
+            </div>
+            <div class="bg-blue-50 p-3 rounded-lg">
+              <p class="text-sm text-gray-500">BMI</p>
+              <p class="text-2xl font-bold">25.8</p>
+              <p class="text-xs text-gray-500">Last: 06/12/2023</p>
+            </div>
+            <div class="bg-blue-50 p-3 rounded-lg">
+              <p class="text-sm text-gray-500">A1C</p>
+              <p class="text-2xl font-bold">6.2%</p>
+              <p class="text-xs text-gray-500">Last: 06/12/2023</p>
+            </div>
+          </div>
+          <button (click)="addNewVitalStatistic()"
+            class="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg">
+            <i class="fas fa-plus mr-1"></i> Record New Vitals
+          </button>
+        </div>
+      </div>
+
+      <!-- Immunizations -->
+      <div class="bg-white rounded-xl shadow-md overflow-hidden">
+        <div class="p-6">
+          <div class="flex justify-between items-center mb-4">
+            <h3 class="text-xl font-semibold text-gray-800">Immunizations</h3>
+            <button (click)="addNewImmunization()" class="text-blue-600 hover:text-blue-800">
+              <i class="fas fa-plus mr-1"></i> Add
+            </button>
+          </div>
+          <div class="space-y-3">
+            <div class="flex justify-between items-center p-3 bg-green-50 rounded-lg">
+              <div>
+                <p class="font-medium">COVID-19 Vaccine</p>
+                <p class="text-sm text-gray-600">Moderna, Booster</p>
+              </div>
+              <div class="text-sm text-gray-500">10/15/2022</div>
+            </div>
+            <div class="flex justify-between items-center p-3 bg-green-50 rounded-lg">
+              <div>
+                <p class="font-medium">Influenza Vaccine</p>
+                <p class="text-sm text-gray-600">Seasonal 2022-2023</p>
+              </div>
+              <div class="text-sm text-gray-500">09/28/2022</div>
+            </div>
+            <div class="flex justify-between items-center p-3 bg-green-50 rounded-lg">
+              <div>
+                <p class="font-medium">Tetanus Booster</p>
+                <p class="text-sm text-gray-600">Tdap</p>
+              </div>
+              <div class="text-sm text-gray-500">05/10/2020</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Family History -->
+      <div class="bg-white rounded-xl shadow-md overflow-hidden">
+        <div class="p-6">
+          <div class="flex justify-between items-center mb-4">
+            <h3 class="text-xl font-semibold text-gray-800">Family History</h3>
+            <button (click)="addNewFamilyHistory()" class="text-blue-600 hover:text-blue-800">
+              <i class="fas fa-plus mr-1"></i> Add
+            </button>
+          </div>
+          <div class="space-y-3">
+            <div class="p-3 bg-purple-50 rounded-lg">
+              <p class="font-medium">Father</p>
+              <p class="text-sm text-gray-600">Type 2 Diabetes, Heart Disease (died at 68)</p>
+            </div>
+            <div class="p-3 bg-purple-50 rounded-lg">
+              <p class="font-medium">Mother</p>
+              <p class="text-sm text-gray-600">Hypertension, Osteoporosis</p>
+            </div>
+            <div class="p-3 bg-purple-50 rounded-lg">
+              <p class="font-medium">Sibling</p>
+              <p class="text-sm text-gray-600">Brother - Asthma</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<app-new-allergies></app-new-allergies>
+<app-new-vital-statistic></app-new-vital-statistic>
+<app-new-immunization></app-new-immunization>
+<app-new-family-history></app-new-family-history>
+<app-new-medical-condition></app-new-medical-condition>
+<app-new-current-medication></app-new-current-medication>

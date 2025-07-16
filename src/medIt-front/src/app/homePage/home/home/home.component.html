@@ -14,17 +14,21 @@
   <!-- Main Content with Sidebar -->
   <div class="flex">
     <!-- Left Sidebar -->
-     <div class="w-48">
-       <app-left-bar></app-left-bar>
-     </div>
+    <div class="w-50">
+      <app-left-bar></app-left-bar>
+    </div>
     <!-- Main Content Area -->
-     <div class=" w-full overflow-hidden  bg-white shadow-md border-gray-200 ">
-       <!-- <app-appointments></app-appointments> -->
-       <router-outlet></router-outlet>
-     </div>
+    <div class=" w-full overflow-hidden  bg-white shadow-md border-gray-200 ">
+      <!-- <app-appointments></app-appointments> -->
+      <router-outlet></router-outlet>
+    </div>
 
   </div>
-  <!-- Footer -->
-  <app-footer></app-footer>
+  <div>
+    <!-- Footer -->
+    <app-footer></app-footer>
+  </div>
+
 </body>
+
 </html>

@@ -37,3 +37,11 @@ build/
 /src/medIt-front/.angular/cache/
 /src/medIt-front/node_modules/
 /src/medIt-front/node_modules/
+/src/main/resources/static/browser/media/fa-brands-400.ttf
+/src/main/resources/static/browser/media/fa-brands-400.woff2
+/src/main/resources/static/browser/media/fa-regular-400.ttf
+/src/main/resources/static/browser/media/fa-regular-400.woff2
+/src/main/resources/static/browser/media/fa-solid-900.ttf
+/src/main/resources/static/browser/media/fa-solid-900.woff2
+/src/main/resources/static/browser/media/fa-v4compatibility.ttf
+/src/main/resources/static/browser/media/fa-v4compatibility.woff2

@@ -1,6 +1,6 @@
 import { Component } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
-import { NEW_PATIENT } from '../app.routes';
+import { PATIENT_PATH } from '../app.routes';
 
 @Component({
   selector: 'app-left-bar',
@@ -13,7 +13,7 @@ export class LeftBarComponent {
   constructor(private router: Router, private route: ActivatedRoute) { };
 
   patientPage() {
-    this.router.navigate([this.router.url + '/' + NEW_PATIENT]);
+    this.router.navigate([this.router.url + '/' + PATIENT_PATH]);
   }
 
 }

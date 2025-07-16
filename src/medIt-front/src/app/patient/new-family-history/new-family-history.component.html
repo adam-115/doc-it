@@ -1,0 +1,159 @@
+<div #newFamilyHistory id="modalEl" tabindex="-1" aria-hidden="true"
+  class="fixed left-0 right-0 top-0 z-50 hidden h-[calc(100%-1rem)] max-h-full w-full overflow-y-auto overflow-x-hidden p-4 md:inset-0">
+  <div class="relative max-h-full w-full max-w-2xl">
+    <!-- Modal content -->
+    <div class="relative rounded-lg bg-white shadow-sm dark:bg-gray-700">
+      <!-- Modal header -->
+      <div
+        class="flex space-x-4 items-center text-white bg-blue-600  justify-between rounded-t border-b p-2.5 dark:border-gray-600">
+        <div>
+          <i class="fa-solid fa-person-breastfeeding"></i>
+        </div>
+        <div>
+          <h3 class="text-xl lg:text-2xl">
+            familly history
+          </h3>
+        </div>
+        <button type="button" (click)="closeModal()"
+          class="ms-auto inline-flex h-8 w-8 items-center justify-center rounded-lg bg-transparent text-sm text-gray-400 hover:bg-gray-200 hover:text-gray-900 dark:hover:bg-gray-600 dark:hover:text-white">
+          <svg class="h-3 w-3" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 14 14">
+            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="m1 1 6 6m0 0 6 6M7 7l6-6M7 7l-6 6" />
+          </svg>
+          <span class="sr-only">Close modal</span>
+        </button>
+      </div>
+      <!-- Modal body -->
+
+
+      <div class="p-6">
+        <form>
+          <!-- Family Member -->
+          <div class="mb-4">
+            <label for="familyMember" class="block text-sm font-medium text-gray-700 mb-1">Family Member*</label>
+            <select id="familyMember"
+              class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              required>
+              <option value="">Select family member</option>
+              <option value="mother">Mother</option>
+              <option value="father">Father</option>
+              <option value="sister">Sister</option>
+              <option value="brother">Brother</option>
+              <option value="daughter">Daughter</option>
+              <option value="son">Son</option>
+              <option value="grandmother_maternal">Maternal Grandmother</option>
+              <option value="grandfather_maternal">Maternal Grandfather</option>
+              <option value="grandmother_paternal">Paternal Grandmother</option>
+              <option value="grandfather_paternal">Paternal Grandfather</option>
+              <option value="aunt">Aunt</option>
+              <option value="uncle">Uncle</option>
+              <option value="cousin">Cousin</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+
+          <!-- Condition -->
+          <div class="mb-4">
+            <label for="condition" class="block text-sm font-medium text-gray-700 mb-1">Medical Condition*</label>
+            <div class="relative">
+              <input type="text" id="condition"
+                class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="e.g. Heart Disease, Diabetes" required>
+              <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                <i class="fas fa-heartbeat text-gray-400"></i>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <!-- Age at Diagnosis -->
+            <div>
+              <label for="ageAtDiagnosis" class="block text-sm font-medium text-gray-700 mb-1">Age at Diagnosis</label>
+              <div class="relative">
+                <input type="number" id="ageAtDiagnosis" min="0" max="120"
+                  class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Age in years">
+                <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                  <span class="text-gray-400">yrs</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Current Status -->
+            <div>
+              <label for="status" class="block text-sm font-medium text-gray-700 mb-1">Current Status</label>
+              <select id="status"
+                class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                <option value="">Select status</option>
+                <option value="alive_with_condition">Alive with condition</option>
+                <option value="alive_no_condition">Alive without condition</option>
+                <option value="deceased_with_condition">Deceased with condition</option>
+                <option value="deceased_other_cause">Deceased - other cause</option>
+                <option value="unknown">Unknown</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Age at Death (conditional) -->
+          <div class="mb-4 hidden" id="ageAtDeathContainer">
+            <label for="ageAtDeath" class="block text-sm font-medium text-gray-700 mb-1">Age at Death</label>
+            <div class="relative">
+              <input type="number" id="ageAtDeath" min="0" max="120"
+                class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="Age in years">
+              <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                <span class="text-gray-400">yrs</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Cause of Death (conditional) -->
+          <div class="mb-4 hidden" id="causeOfDeathContainer">
+            <label for="causeOfDeath" class="block text-sm font-medium text-gray-700 mb-1">Cause of Death</label>
+            <input type="text" id="causeOfDeath"
+              class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              placeholder="If known">
+          </div>
+
+          <!-- Side of Family -->
+          <div class="mb-4">
+            <label class="block text-sm font-medium text-gray-700 mb-2">Side of Family</label>
+            <div class="grid grid-cols-2 gap-3">
+              <label class="inline-flex items-center">
+                <input type="radio" name="familySide" value="maternal"
+                  class="h-4 w-4 text-pink-500 focus:ring-pink-500">
+                <span class="ml-2 text-sm text-gray-700">Maternal</span>
+              </label>
+              <label class="inline-flex items-center">
+                <input type="radio" name="familySide" value="paternal"
+                  class="h-4 w-4 text-blue-500 focus:ring-blue-500">
+                <span class="ml-2 text-sm text-gray-700">Paternal</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Notes -->
+          <div class="mb-6">
+            <label for="notes" class="block text-sm font-medium text-gray-700 mb-1">Additional Notes</label>
+            <textarea id="notes" rows="2"
+              class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              placeholder="Any additional details about the condition"></textarea>
+          </div>
+
+          <!-- Form Actions -->
+          <hr class="my-4 border-gray-300 dark:border-gray-600" />
+          <div class="flex justify-end space-x-3">
+            <button type="button"
+              class="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+              Cancel
+            </button>
+            <button type="submit"
+              class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+              Save Family History
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>

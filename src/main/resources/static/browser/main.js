@@ -54,6 +54,9 @@ function setActiveConsumer(consumer) {
 function getActiveConsumer() {
   return activeConsumer;
 }
+function isInNotificationPhase() {
+  return inNotificationPhase;
+}
 var REACTIVE_NODE = {
   version: 0,
   lastCleanEpoch: 0,
@@ -2635,6 +2638,14 @@ function emitInjectEvent(token, value, flags) {
       value,
       flags
     }
+  });
+}
+function emitEffectCreatedEvent(effect5) {
+  !ngDevMode && throwError2("Injector profiler should never be called in production mode");
+  injectorProfiler({
+    type: 3,
+    context: getInjectorProfilerContext(),
+    effect: effect5
   });
 }
 function runInInjectorProfilerContext(injector, token, callback) {
@@ -9418,8 +9429,8 @@ function processCleanups(tView, lView) {
   const effects = lView[EFFECTS];
   if (effects !== null) {
     lView[EFFECTS] = null;
-    for (const effect4 of effects) {
-      effect4.destroy();
+    for (const effect5 of effects) {
+      effect5.destroy();
     }
   }
 }
@@ -9811,15 +9822,15 @@ function runEffectsInView(view) {
   let tryFlushEffects = true;
   while (tryFlushEffects) {
     let foundDirtyEffect = false;
-    for (const effect4 of view[EFFECTS]) {
-      if (!effect4.dirty) {
+    for (const effect5 of view[EFFECTS]) {
+      if (!effect5.dirty) {
         continue;
       }
       foundDirtyEffect = true;
-      if (effect4.zone === null || Zone.current === effect4.zone) {
-        effect4.run();
+      if (effect5.zone === null || Zone.current === effect5.zone) {
+        effect5.run();
       } else {
-        effect4.zone.run(() => effect4.run());
+        effect5.zone.run(() => effect5.run());
       }
     }
     tryFlushEffects = foundDirtyEffect && !!(view[FLAGS] & 8192);
@@ -14197,7 +14208,7 @@ function handleInjectorProfilerEvent(injectorProfilerEvent) {
     handleEffectCreatedEvent(context2, injectorProfilerEvent.effect);
   }
 }
-function handleEffectCreatedEvent(context2, effect4) {
+function handleEffectCreatedEvent(context2, effect5) {
   const diResolver = getDIResolver(context2.injector);
   if (diResolver === null) {
     throwError2("An EffectCreated event must be run within an injection context.");
@@ -14208,7 +14219,7 @@ function handleEffectCreatedEvent(context2, effect4) {
   if (!resolverToEffects.has(diResolver)) {
     resolverToEffects.set(diResolver, []);
   }
-  resolverToEffects.get(diResolver).push(effect4);
+  resolverToEffects.get(diResolver).push(effect5);
 }
 function handleInjectEvent(context2, data) {
   const diResolver = getDIResolver(context2.injector);
@@ -14805,7 +14816,7 @@ function extractEffectsFromInjector(injector) {
   }
   const resolverToEffects = getFrameworkDIDebugData().resolverToEffects;
   const effects = resolverToEffects.get(diResolver) ?? [];
-  return effects.map((effect4) => effect4[SIGNAL]);
+  return effects.map((effect5) => effect5[SIGNAL]);
 }
 function extractSignalNodesAndEdgesFromRoots(nodes, signalDependenciesMap = /* @__PURE__ */ new Map()) {
   for (const node of nodes) {
@@ -23218,6 +23229,143 @@ var EffectRefImpl = class {
     this[SIGNAL].destroy();
   }
 };
+function effect(effectFn, options) {
+  ngDevMode && assertNotInReactiveContext(effect, "Call `effect` outside of a reactive context. For example, schedule the effect inside the component constructor.");
+  !options?.injector && assertInInjectionContext(effect);
+  if (ngDevMode && options?.allowSignalWrites !== void 0) {
+    console.warn(`The 'allowSignalWrites' flag is deprecated and no longer impacts effect() (writes are always allowed)`);
+  }
+  const injector = options?.injector ?? inject(Injector);
+  let destroyRef = options?.manualCleanup !== true ? injector.get(DestroyRef) : null;
+  let node;
+  const viewContext = injector.get(ViewContext, null, {
+    optional: true
+  });
+  const notifier = injector.get(ChangeDetectionScheduler);
+  if (viewContext !== null && !options?.forceRoot) {
+    node = createViewEffect(viewContext.view, notifier, effectFn);
+    if (destroyRef instanceof NodeInjectorDestroyRef && destroyRef._lView === viewContext.view) {
+      destroyRef = null;
+    }
+  } else {
+    node = createRootEffect(effectFn, injector.get(EffectScheduler), notifier);
+  }
+  node.injector = injector;
+  if (destroyRef !== null) {
+    node.onDestroyFn = destroyRef.onDestroy(() => node.destroy());
+  }
+  const effectRef = new EffectRefImpl(node);
+  if (ngDevMode) {
+    node.debugName = options?.debugName ?? "";
+    const prevInjectorProfilerContext = setInjectorProfilerContext({
+      injector,
+      token: null
+    });
+    try {
+      emitEffectCreatedEvent(effectRef);
+    } finally {
+      setInjectorProfilerContext(prevInjectorProfilerContext);
+    }
+  }
+  return effectRef;
+}
+var BASE_EFFECT_NODE = /* @__PURE__ */ (() => __spreadProps(__spreadValues({}, REACTIVE_NODE), {
+  consumerIsAlwaysLive: true,
+  consumerAllowSignalWrites: true,
+  dirty: true,
+  hasRun: false,
+  cleanupFns: void 0,
+  zone: null,
+  kind: "effect",
+  onDestroyFn: noop2,
+  run() {
+    this.dirty = false;
+    if (ngDevMode && isInNotificationPhase()) {
+      throw new Error(`Schedulers cannot synchronously execute watches while scheduling.`);
+    }
+    if (this.hasRun && !consumerPollProducersForChange(this)) {
+      return;
+    }
+    this.hasRun = true;
+    const registerCleanupFn = (cleanupFn) => (this.cleanupFns ??= []).push(cleanupFn);
+    const prevNode = consumerBeforeComputation(this);
+    const prevRefreshingViews = setIsRefreshingViews(false);
+    try {
+      this.maybeCleanup();
+      this.fn(registerCleanupFn);
+    } finally {
+      setIsRefreshingViews(prevRefreshingViews);
+      consumerAfterComputation(this, prevNode);
+    }
+  },
+  maybeCleanup() {
+    if (!this.cleanupFns?.length) {
+      return;
+    }
+    try {
+      while (this.cleanupFns.length) {
+        this.cleanupFns.pop()();
+      }
+    } finally {
+      this.cleanupFns = [];
+    }
+  }
+}))();
+var ROOT_EFFECT_NODE = /* @__PURE__ */ (() => __spreadProps(__spreadValues({}, BASE_EFFECT_NODE), {
+  consumerMarkedDirty() {
+    this.scheduler.schedule(this);
+    this.notifier.notify(
+      12
+      /* NotificationSource.RootEffect */
+    );
+  },
+  destroy() {
+    consumerDestroy(this);
+    this.onDestroyFn();
+    this.maybeCleanup();
+    this.scheduler.remove(this);
+  }
+}))();
+var VIEW_EFFECT_NODE = /* @__PURE__ */ (() => __spreadProps(__spreadValues({}, BASE_EFFECT_NODE), {
+  consumerMarkedDirty() {
+    this.view[FLAGS] |= 8192;
+    markAncestorsForTraversal(this.view);
+    this.notifier.notify(
+      13
+      /* NotificationSource.ViewEffect */
+    );
+  },
+  destroy() {
+    consumerDestroy(this);
+    this.onDestroyFn();
+    this.maybeCleanup();
+    this.view[EFFECTS]?.delete(this);
+  }
+}))();
+function createViewEffect(view, notifier, fn2) {
+  const node = Object.create(VIEW_EFFECT_NODE);
+  node.view = view;
+  node.zone = typeof Zone !== "undefined" ? Zone.current : null;
+  node.notifier = notifier;
+  node.fn = fn2;
+  view[EFFECTS] ??= /* @__PURE__ */ new Set();
+  view[EFFECTS].add(node);
+  node.consumerMarkedDirty(node);
+  return node;
+}
+function createRootEffect(fn2, scheduler, notifier) {
+  const node = Object.create(ROOT_EFFECT_NODE);
+  node.fn = fn2;
+  node.scheduler = scheduler;
+  node.notifier = notifier;
+  node.zone = typeof Zone !== "undefined" ? Zone.current : null;
+  node.scheduler.schedule(node);
+  node.notifier.notify(
+    12
+    /* NotificationSource.RootEffect */
+  );
+  return node;
+}
 var ResourceStatus;
 (function(ResourceStatus2) {
   ResourceStatus2[ResourceStatus2["Idle"] = 0] = "Idle";
@@ -40598,354 +40746,256 @@ var TestComponent = class _TestComponent {
   static \u0275fac = function TestComponent_Factory(__ngFactoryType__) {
     return new (__ngFactoryType__ || _TestComponent)();
   };
-  static \u0275cmp = /* @__PURE__ */ \u0275\u0275defineComponent({ type: _TestComponent, selectors: [["app-test"]], decls: 315, vars: 0, consts: [["lang", "en"], ["charset", "UTF-8"], ["name", "viewport", "content", "width=device-width, initial-scale=1.0"], ["rel", "stylesheet", "href", \u0275\u0275trustConstantResourceUrl`https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css`], [1, "bg-gray-100", "font-sans"], [1, "flex", "h-screen", "overflow-hidden"], [1, "hidden", "md:flex", "md:flex-shrink-0"], [1, "flex", "flex-col", "w-64", "bg-blue-800", "text-white"], [1, "flex", "items-center", "justify-center", "h-16", "px-4", "bg-blue-900"], [1, "text-xl", "font-semibold"], [1, "flex", "flex-col", "flex-grow", "px-4", "py-4", "overflow-y-auto"], [1, "flex-1", "space-y-2"], ["href", "#", 1, "flex", "items-center", "px-4", "py-3", "text-sm", "font-medium", "rounded-lg", "hover:bg-blue-700"], [1, "fas", "fa-tachometer-alt", "mr-3"], ["href", "#", 1, "flex", "items-center", "px-4", "py-3", "text-sm", "font-medium", "rounded-lg", "bg-blue-700"], [1, "fas", "fa-users", "mr-3"], [1, "fas", "fa-calendar-check", "mr-3"], [1, "fas", "fa-file-medical", "mr-3"], [1, "fas", "fa-prescription", "mr-3"], [1, "flex", "flex-col", "flex-1", "overflow-hidden"], [1, "flex", "items-center", "justify-between", "px-6", "py-4", "bg-white", "border-b", "border-gray-200"], [1, "flex", "items-center"], [1, "md:hidden", "mr-4", "text-gray-500"], [1, "fas", "fa-bars"], [1, "text-xl", "font-semibold", "text-gray-800"], [1, "flex", "items-center", "space-x-4"], [1, "p-2", "text-gray-500", "rounded-full", "hover:bg-gray-100"], [1, "fas", "fa-bell"], [1, "relative"], ["type", "text", "placeholder", "Search...", 1, "pl-10", "pr-4", "py-2", "border", "rounded-full", "text-sm", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500"], [1, "fas", "fa-search", "absolute", "left-3", "top-2.5", "text-gray-400"], [1, "flex-1", "overflow-y-auto", "p-6", "bg-gray-100"], [1, "flex", "flex-col", "md:flex-row", "justify-between", "items-start", "md:items-center", "mb-6"], [1, "text-sm", "text-gray-600", "mt-1"], [1, "mt-4", "md:mt-0", "flex", "space-x-3"], ["type", "text", "placeholder", "Search patients...", 1, "pl-10", "pr-4", "py-2", "border", "rounded-lg", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500"], [1, "px-4", "py-2", "bg-blue-600", "text-white", "rounded-lg", "hover:bg-blue-700", "flex", "items-center"], [1, "fas", "fa-plus", "mr-2"], [1, "bg-white", "rounded-lg", "shadow", "p-4", "mb-6"], [1, "flex", "flex-wrap", "items-center", "gap-4"], ["for", "status-filter", 1, "mr-2", "text-sm", "text-gray-600"], ["id", "status-filter", 1, "border", "rounded-lg", "px-2", "py-1", "text-sm", "focus:outline-none", "focus:ring-1", "focus:ring-blue-500"], ["for", "doctor-filter", 1, "mr-2", "text-sm", "text-gray-600"], ["id", "doctor-filter", 1, "border", "rounded-lg", "px-2", "py-1", "text-sm", "focus:outline-none", "focus:ring-1", "focus:ring-blue-500"], ["for", "date-filter", 1, "mr-2", "text-sm", "text-gray-600"], ["id", "date-filter", 1, "border", "rounded-lg", "px-2", "py-1", "text-sm", "focus:outline-none", "focus:ring-1", "focus:ring-blue-500"], [1, "ml-auto", "text-sm", "text-blue-600", "hover:text-blue-800", "flex", "items-center"], [1, "fas", "fa-filter", "mr-1"], [1, "bg-white", "rounded-lg", "shadow", "overflow-hidden"], [1, "overflow-x-auto"], [1, "min-w-full", "divide-y", "divide-gray-200"], [1, "bg-gray-50"], ["scope", "col", 1, "px-6", "py-3", "text-left", "text-xs", "font-medium", "text-gray-500", "uppercase", "tracking-wider"], ["scope", "col", 1, "px-6", "py-3", "text-right", "text-xs", "font-medium", "text-gray-500", "uppercase", "tracking-wider"], [1, "bg-white", "divide-y", "divide-gray-200"], [1, "hover:bg-gray-50"], [1, "px-6", "py-4", "whitespace-nowrap"], [1, "flex-shrink-0", "h-10", "w-10"], ["src", "https://randomuser.me/api/portraits/men/32.jpg", "alt", "", 1, "h-10", "w-10", "rounded-full"], [1, "ml-4"], [1, "text-sm", "font-medium", "text-gray-900"], [1, "text-sm", "text-gray-500"], [1, "text-xs", "text-gray-400"], [1, "text-sm", "text-gray-900"], [1, "px-2", "inline-flex", "text-xs", "leading-5", "font-semibold", "rounded-full", "bg-green-100", "text-green-800"], [1, "px-6", "py-4", "whitespace-nowrap", "text-right", "text-sm", "font-medium"], [1, "text-blue-600", "hover:text-blue-900", "mr-3"], [1, "text-gray-600", "hover:text-gray-900"], ["src", "https://randomuser.me/api/portraits/women/44.jpg", "alt", "", 1, "h-10", "w-10", "rounded-full"], ["src", "https://randomuser.me/api/portraits/men/75.jpg", "alt", "", 1, "h-10", "w-10", "rounded-full"], [1, "px-2", "inline-flex", "text-xs", "leading-5", "font-semibold", "rounded-full", "bg-yellow-100", "text-yellow-800"], ["src", "https://randomuser.me/api/portraits/women/68.jpg", "alt", "", 1, "h-10", "w-10", "rounded-full"], [1, "px-2", "inline-flex", "text-xs", "leading-5", "font-semibold", "rounded-full", "bg-blue-100", "text-blue-800"], ["src", "https://randomuser.me/api/portraits/men/22.jpg", "alt", "", 1, "h-10", "w-10", "rounded-full"], [1, "px-2", "inline-flex", "text-xs", "leading-5", "font-semibold", "rounded-full", "bg-gray-100", "text-gray-800"], [1, "bg-gray-50", "px-6", "py-3", "flex", "items-center", "justify-between", "border-t", "border-gray-200"], [1, "flex-1", "flex", "justify-between", "sm:hidden"], ["href", "#", 1, "relative", "inline-flex", "items-center", "px-4", "py-2", "border", "border-gray-300", "text-sm", "font-medium", "rounded-md", "text-gray-700", "bg-white", "hover:bg-gray-50"], ["href", "#", 1, "ml-3", "relative", "inline-flex", "items-center", "px-4", "py-2", "border", "border-gray-300", "text-sm", "font-medium", "rounded-md", "text-gray-700", "bg-white", "hover:bg-gray-50"], [1, "hidden", "sm:flex-1", "sm:flex", "sm:items-center", "sm:justify-between"], [1, "text-sm", "text-gray-700"], [1, "font-medium"], ["aria-label", "Pagination", 1, "relative", "z-0", "inline-flex", "rounded-md", "shadow-sm", "-space-x-px"], ["href", "#", 1, "relative", "inline-flex", "items-center", "px-2", "py-2", "rounded-l-md", "border", "border-gray-300", "bg-white", "text-sm", "font-medium", "text-gray-500", "hover:bg-gray-50"], [1, "sr-only"], [1, "fas", "fa-chevron-left"], ["href", "#", "aria-current", "page", 1, "z-10", "bg-blue-50", "border-blue-500", "text-blue-600", "relative", "inline-flex", "items-center", "px-4", "py-2", "border", "text-sm", "font-medium"], ["href", "#", 1, "bg-white", "border-gray-300", "text-gray-500", "hover:bg-gray-50", "relative", "inline-flex", "items-center", "px-4", "py-2", "border", "text-sm", "font-medium"], ["href", "#", 1, "relative", "inline-flex", "items-center", "px-2", "py-2", "rounded-r-md", "border", "border-gray-300", "bg-white", "text-sm", "font-medium", "text-gray-500", "hover:bg-gray-50"], [1, "fas", "fa-chevron-right"]], template: function TestComponent_Template(rf, ctx) {
+  static \u0275cmp = /* @__PURE__ */ \u0275\u0275defineComponent({ type: _TestComponent, selectors: [["app-test"]], decls: 231, vars: 0, consts: [["lang", "en"], ["charset", "UTF-8"], ["name", "viewport", "content", "width=device-width, initial-scale=1.0"], ["href", \u0275\u0275trustConstantResourceUrl`https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css`, "rel", "stylesheet"], [1, "bg-gray-50", "font-sans"], [1, "container", "mx-auto", "px-4", "py-8"], [1, "flex", "justify-between", "items-center", "mb-8"], [1, "text-3xl", "font-bold", "text-blue-800"], [1, "text-gray-600"], [1, "flex", "items-center", "space-x-4"], [1, "bg-blue-100", "text-blue-800", "px-3", "py-1", "rounded-full", "text-sm", "font-medium"], [1, "bg-blue-600", "hover:bg-blue-700", "text-white", "px-4", "py-2", "rounded-lg", "flex", "items-center"], [1, "fas", "fa-print", "mr-2"], [1, "space-y-6"], [1, "bg-white", "rounded-xl", "shadow-md", "overflow-hidden"], [1, "border-b", "border-gray-200", "px-6", "py-4", "flex", "justify-between", "items-center"], [1, "text-lg", "font-semibold", "text-gray-800"], [1, "text-blue-600", "hover:text-blue-800", "text-sm"], [1, "fas", "fa-edit", "mr-1"], [1, "p-6"], [1, "grid", "grid-cols-1", "md:grid-cols-4", "gap-4"], [1, "text-sm", "text-gray-500"], [1, "font-medium"], [1, "grid", "grid-cols-1", "md:grid-cols-3", "gap-6"], [1, "font-medium", "text-gray-700", "mb-3", "flex", "items-center"], [1, "fas", "fa-disease", "text-blue-500", "mr-2"], [1, "space-y-2"], [1, "flex", "items-start"], [1, "text-green-500", "mr-2"], [1, "fas", "fa-allergy", "text-red-500", "mr-2"], [1, "text-red-500", "mr-2"], [1, "text-yellow-500", "mr-2"], [1, "fas", "fa-pills", "text-purple-500", "mr-2"], [1, "text-purple-500", "mr-2"], [1, "border-b", "border-gray-200", "px-6", "py-4"], [1, "mb-6"], [1, "fas", "fa-heartbeat", "text-blue-500", "mr-2"], [1, "bg-blue-50", "p-4", "rounded-lg"], [1, "grid", "grid-cols-2", "md:grid-cols-4", "gap-4"], [1, "mt-3", "text-sm", "text-gray-500"], [1, "fas", "fa-syringe", "text-green-500", "mr-2"], [1, "bg-green-50", "p-4", "rounded-lg"], [1, "grid", "grid-cols-1", "md:grid-cols-2", "gap-4"], [1, "fas", "fa-family", "text-purple-500", "mr-2"], [1, "bg-purple-50", "p-4", "rounded-lg"], [1, "space-y-4"], ["type", "checkbox", "id", "verifyInfo", 1, "mt-1", "h-4", "w-4", "text-blue-600", "focus:ring-blue-500", "rounded"], ["for", "verifyInfo", 1, "ml-2", "block", "text-sm", "text-gray-700"], ["type", "checkbox", "id", "verifyConsent", 1, "mt-1", "h-4", "w-4", "text-blue-600", "focus:ring-blue-500", "rounded"], ["for", "verifyConsent", 1, "ml-2", "block", "text-sm", "text-gray-700"], ["type", "checkbox", "id", "verifyReview", 1, "mt-1", "h-4", "w-4", "text-blue-600", "focus:ring-blue-500", "rounded"], ["for", "verifyReview", 1, "ml-2", "block", "text-sm", "text-gray-700"], [1, "mt-6"], ["for", "providerName", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "text", "id", "providerName", "placeholder", "Your full name", 1, "w-full", "md:w-1/2", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "flex", "justify-between", "pt-6"], [1, "px-6", "py-3", "border", "border-gray-300", "rounded-lg", "text-gray-700", "hover:bg-gray-50", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500"], [1, "fas", "fa-arrow-left", "mr-2"], [1, "px-6", "py-3", "bg-green-600", "text-white", "rounded-lg", "hover:bg-green-700", "focus:outline-none", "focus:ring-2", "focus:ring-green-500", "focus:ring-offset-2"], [1, "fas", "fa-check-circle", "mr-2"]], template: function TestComponent_Template(rf, ctx) {
     if (rf & 1) {
       \u0275\u0275elementStart(0, "html", 0)(1, "head");
       \u0275\u0275element(2, "meta", 1)(3, "meta", 2);
       \u0275\u0275elementStart(4, "title");
-      \u0275\u0275text(5, "MediCare - Patient List");
+      \u0275\u0275text(5, "Patient Review");
       \u0275\u0275elementEnd();
       \u0275\u0275element(6, "link", 3);
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(7, "body", 4)(8, "div", 5)(9, "div", 6)(10, "div", 7)(11, "div", 8)(12, "span", 9);
-      \u0275\u0275text(13, "MediCare");
+      \u0275\u0275elementStart(7, "body", 4)(8, "div", 5)(9, "div", 6)(10, "div")(11, "h1", 7);
+      \u0275\u0275text(12, "Patient Review");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(13, "p", 8);
+      \u0275\u0275text(14, "Verify patient information before submission");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(14, "div", 10)(15, "nav", 11)(16, "a", 12);
-      \u0275\u0275element(17, "i", 13);
-      \u0275\u0275text(18, " Dashboard ");
+      \u0275\u0275elementStart(15, "div", 9)(16, "span", 10);
+      \u0275\u0275text(17, "Pending Review");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(19, "a", 14);
-      \u0275\u0275element(20, "i", 15);
-      \u0275\u0275text(21, " Patients ");
+      \u0275\u0275elementStart(18, "button", 11);
+      \u0275\u0275element(19, "i", 12);
+      \u0275\u0275text(20, " Print ");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(21, "div", 13)(22, "div", 14)(23, "div", 15)(24, "h3", 16);
+      \u0275\u0275text(25, "Patient Information");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(22, "a", 12);
-      \u0275\u0275element(23, "i", 16);
-      \u0275\u0275text(24, " Appointments ");
+      \u0275\u0275elementStart(26, "button", 17);
+      \u0275\u0275element(27, "i", 18);
+      \u0275\u0275text(28, " Edit ");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(29, "div", 19)(30, "div", 20)(31, "div")(32, "p", 21);
+      \u0275\u0275text(33, "Full Name");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(25, "a", 12);
-      \u0275\u0275element(26, "i", 17);
-      \u0275\u0275text(27, " Medical Records ");
+      \u0275\u0275elementStart(34, "p", 22);
+      \u0275\u0275text(35, "John Michael Doe");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(36, "div")(37, "p", 21);
+      \u0275\u0275text(38, "Date of Birth");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(28, "a", 12);
-      \u0275\u0275element(29, "i", 18);
-      \u0275\u0275text(30, " Prescriptions ");
+      \u0275\u0275elementStart(39, "p", 22);
+      \u0275\u0275text(40, "May 15, 1985 (38 years)");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(41, "div")(42, "p", 21);
+      \u0275\u0275text(43, "Gender");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(44, "p", 22);
+      \u0275\u0275text(45, "Male");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(46, "div")(47, "p", 21);
+      \u0275\u0275text(48, "Patient ID");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(49, "p", 22);
+      \u0275\u0275text(50, "P-123456");
       \u0275\u0275elementEnd()()()()();
-      \u0275\u0275elementStart(31, "div", 19)(32, "header", 20)(33, "div", 21)(34, "button", 22);
-      \u0275\u0275element(35, "i", 23);
+      \u0275\u0275elementStart(51, "div", 14)(52, "div", 15)(53, "h3", 16);
+      \u0275\u0275text(54, "Medical History Summary");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(36, "h1", 24);
-      \u0275\u0275text(37, "Patient List");
+      \u0275\u0275elementStart(55, "button", 17);
+      \u0275\u0275element(56, "i", 18);
+      \u0275\u0275text(57, " Edit ");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(38, "div", 25)(39, "button", 26);
-      \u0275\u0275element(40, "i", 27);
+      \u0275\u0275elementStart(58, "div", 19)(59, "div", 23)(60, "div")(61, "h4", 24);
+      \u0275\u0275element(62, "i", 25);
+      \u0275\u0275text(63, " Conditions ");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(41, "div", 28);
-      \u0275\u0275element(42, "input", 29)(43, "i", 30);
-      \u0275\u0275elementEnd()()();
-      \u0275\u0275elementStart(44, "main", 31)(45, "div", 32)(46, "div")(47, "h2", 24);
-      \u0275\u0275text(48, "All Patients");
+      \u0275\u0275elementStart(64, "ul", 26)(65, "li", 27)(66, "span", 28);
+      \u0275\u0275text(67, "\u2022");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(49, "p", 33);
-      \u0275\u0275text(50, "Manage your patient records and information");
+      \u0275\u0275elementStart(68, "span");
+      \u0275\u0275text(69, "Type 2 Diabetes (2018)");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(51, "div", 34)(52, "div", 28);
-      \u0275\u0275element(53, "input", 35)(54, "i", 30);
+      \u0275\u0275elementStart(70, "li", 27)(71, "span", 28);
+      \u0275\u0275text(72, "\u2022");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(55, "button", 36);
-      \u0275\u0275element(56, "i", 37);
-      \u0275\u0275text(57, " New Patient ");
-      \u0275\u0275elementEnd()()();
-      \u0275\u0275elementStart(58, "div", 38)(59, "div", 39)(60, "div", 21)(61, "label", 40);
-      \u0275\u0275text(62, "Status:");
+      \u0275\u0275elementStart(73, "span");
+      \u0275\u0275text(74, "Hypertension (2019)");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(75, "li", 27)(76, "span", 28);
+      \u0275\u0275text(77, "\u2022");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(63, "select", 41)(64, "option");
-      \u0275\u0275text(65, "All Patients");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(66, "option");
-      \u0275\u0275text(67, "Active");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(68, "option");
-      \u0275\u0275text(69, "Inactive");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(70, "option");
-      \u0275\u0275text(71, "New");
-      \u0275\u0275elementEnd()()();
-      \u0275\u0275elementStart(72, "div", 21)(73, "label", 42);
-      \u0275\u0275text(74, "Doctor:");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(75, "select", 43)(76, "option");
-      \u0275\u0275text(77, "All Doctors");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(78, "option");
-      \u0275\u0275text(79, "Dr. Sarah Johnson");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(80, "option");
-      \u0275\u0275text(81, "Dr. Michael Chen");
-      \u0275\u0275elementEnd()()();
-      \u0275\u0275elementStart(82, "div", 21)(83, "label", 44);
-      \u0275\u0275text(84, "Last Visit:");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(85, "select", 45)(86, "option");
-      \u0275\u0275text(87, "Any Time");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(88, "option");
-      \u0275\u0275text(89, "Last 30 Days");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(90, "option");
-      \u0275\u0275text(91, "Last 3 Months");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(92, "option");
-      \u0275\u0275text(93, "Last Year");
-      \u0275\u0275elementEnd()()();
-      \u0275\u0275elementStart(94, "button", 46);
-      \u0275\u0275element(95, "i", 47);
-      \u0275\u0275text(96, " Advanced Filters ");
-      \u0275\u0275elementEnd()()();
-      \u0275\u0275elementStart(97, "div", 48)(98, "div", 49)(99, "table", 50)(100, "thead", 51)(101, "tr")(102, "th", 52);
-      \u0275\u0275text(103, "Patient");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(104, "th", 52);
-      \u0275\u0275text(105, "Contact");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(106, "th", 52);
-      \u0275\u0275text(107, "Last Visit");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(108, "th", 52);
-      \u0275\u0275text(109, "Status");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(110, "th", 52);
-      \u0275\u0275text(111, "Primary Doctor");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(112, "th", 53);
-      \u0275\u0275text(113, "Actions");
-      \u0275\u0275elementEnd()()();
-      \u0275\u0275elementStart(114, "tbody", 54)(115, "tr", 55)(116, "td", 56)(117, "div", 21)(118, "div", 57);
-      \u0275\u0275element(119, "img", 58);
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(120, "div", 59)(121, "div", 60);
-      \u0275\u0275text(122, "John Smith");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(123, "div", 61);
-      \u0275\u0275text(124, "ID: #PAT-1001");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(125, "div", 62);
-      \u0275\u0275text(126, "Male, 42 years");
+      \u0275\u0275elementStart(78, "span");
+      \u0275\u0275text(79, "Hyperlipidemia (2020)");
       \u0275\u0275elementEnd()()()();
-      \u0275\u0275elementStart(127, "td", 56)(128, "div", 63);
-      \u0275\u0275text(129, "john.smith_example.com");
+      \u0275\u0275elementStart(80, "div")(81, "h4", 24);
+      \u0275\u0275element(82, "i", 29);
+      \u0275\u0275text(83, " Allergies ");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(130, "div", 61);
-      \u0275\u0275text(131, "(555) 123-4567");
+      \u0275\u0275elementStart(84, "ul", 26)(85, "li", 27)(86, "span", 30);
+      \u0275\u0275text(87, "\u2022");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(88, "span");
+      \u0275\u0275text(89, "Penicillin (Severe)");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(132, "td", 56)(133, "div", 63);
-      \u0275\u0275text(134, "Jun 15, 2023");
+      \u0275\u0275elementStart(90, "li", 27)(91, "span", 31);
+      \u0275\u0275text(92, "\u2022");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(135, "div", 61);
-      \u0275\u0275text(136, "Follow-up");
-      \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(137, "td", 56)(138, "span", 64);
-      \u0275\u0275text(139, " Active ");
-      \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(140, "td", 56)(141, "div", 63);
-      \u0275\u0275text(142, "Dr. Sarah Johnson");
-      \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(143, "td", 65)(144, "button", 66);
-      \u0275\u0275text(145, "View");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(146, "button", 67);
-      \u0275\u0275text(147, "Message");
-      \u0275\u0275elementEnd()()();
-      \u0275\u0275elementStart(148, "tr", 55)(149, "td", 56)(150, "div", 21)(151, "div", 57);
-      \u0275\u0275element(152, "img", 68);
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(153, "div", 59)(154, "div", 60);
-      \u0275\u0275text(155, "Emily Johnson");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(156, "div", 61);
-      \u0275\u0275text(157, "ID: #PAT-1002");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(158, "div", 62);
-      \u0275\u0275text(159, "Female, 35 years");
+      \u0275\u0275elementStart(93, "span");
+      \u0275\u0275text(94, "Sulfa Drugs (Moderate)");
       \u0275\u0275elementEnd()()()();
-      \u0275\u0275elementStart(160, "td", 56)(161, "div", 63);
-      \u0275\u0275text(162, "emily.j_example.com");
+      \u0275\u0275elementStart(95, "div")(96, "h4", 24);
+      \u0275\u0275element(97, "i", 32);
+      \u0275\u0275text(98, " Medications ");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(163, "div", 61);
-      \u0275\u0275text(164, "(555) 234-5678");
-      \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(165, "td", 56)(166, "div", 63);
-      \u0275\u0275text(167, "Jun 10, 2023");
+      \u0275\u0275elementStart(99, "ul", 26)(100, "li", 27)(101, "span", 33);
+      \u0275\u0275text(102, "\u2022");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(168, "div", 61);
-      \u0275\u0275text(169, "Annual Checkup");
+      \u0275\u0275elementStart(103, "span");
+      \u0275\u0275text(104, "Lisinopril 10mg daily");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(170, "td", 56)(171, "span", 64);
-      \u0275\u0275text(172, " Active ");
-      \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(173, "td", 56)(174, "div", 63);
-      \u0275\u0275text(175, "Dr. Michael Chen");
-      \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(176, "td", 65)(177, "button", 66);
-      \u0275\u0275text(178, "View");
+      \u0275\u0275elementStart(105, "li", 27)(106, "span", 33);
+      \u0275\u0275text(107, "\u2022");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(179, "button", 67);
-      \u0275\u0275text(180, "Message");
+      \u0275\u0275elementStart(108, "span");
+      \u0275\u0275text(109, "Atorvastatin 20mg daily");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(110, "li", 27)(111, "span", 33);
+      \u0275\u0275text(112, "\u2022");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(113, "span");
+      \u0275\u0275text(114, "Metformin 500mg twice daily");
+      \u0275\u0275elementEnd()()()()()()();
+      \u0275\u0275elementStart(115, "div", 14)(116, "div", 34)(117, "h3", 16);
+      \u0275\u0275text(118, "New Entries to Be Added");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(119, "div", 19)(120, "div", 35)(121, "h4", 24);
+      \u0275\u0275element(122, "i", 36);
+      \u0275\u0275text(123, " Vital Signs ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(124, "div", 37)(125, "div", 38)(126, "div")(127, "p", 21);
+      \u0275\u0275text(128, "Blood Pressure");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(129, "p", 22);
+      \u0275\u0275text(130, "128/82 mmHg");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(131, "div")(132, "p", 21);
+      \u0275\u0275text(133, "Heart Rate");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(134, "p", 22);
+      \u0275\u0275text(135, "72 bpm");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(136, "div")(137, "p", 21);
+      \u0275\u0275text(138, "Temperature");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(139, "p", 22);
+      \u0275\u0275text(140, "36.8 \xB0C");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(141, "div")(142, "p", 21);
+      \u0275\u0275text(143, "SpO\u2082");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(144, "p", 22);
+      \u0275\u0275text(145, "98%");
       \u0275\u0275elementEnd()()();
-      \u0275\u0275elementStart(181, "tr", 55)(182, "td", 56)(183, "div", 21)(184, "div", 57);
-      \u0275\u0275element(185, "img", 69);
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(186, "div", 59)(187, "div", 60);
-      \u0275\u0275text(188, "Michael Brown");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(189, "div", 61);
-      \u0275\u0275text(190, "ID: #PAT-1003");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(191, "div", 62);
-      \u0275\u0275text(192, "Male, 58 years");
+      \u0275\u0275elementStart(146, "div", 39);
+      \u0275\u0275text(147, " Recorded: ");
+      \u0275\u0275elementStart(148, "span", 22);
+      \u0275\u0275text(149, "Today at 10:30 AM");
       \u0275\u0275elementEnd()()()();
-      \u0275\u0275elementStart(193, "td", 56)(194, "div", 63);
-      \u0275\u0275text(195, "michael.b_example.com");
+      \u0275\u0275elementStart(150, "div", 35)(151, "h4", 24);
+      \u0275\u0275element(152, "i", 40);
+      \u0275\u0275text(153, " New Immunization ");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(196, "div", 61);
-      \u0275\u0275text(197, "(555) 345-6789");
-      \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(198, "td", 56)(199, "div", 63);
-      \u0275\u0275text(200, "May 28, 2023");
+      \u0275\u0275elementStart(154, "div", 41)(155, "div", 42)(156, "div")(157, "p", 21);
+      \u0275\u0275text(158, "Vaccine");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(201, "div", 61);
-      \u0275\u0275text(202, "Lab Results");
+      \u0275\u0275elementStart(159, "p", 22);
+      \u0275\u0275text(160, "Influenza (Seasonal 2023-2024)");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(203, "td", 56)(204, "span", 70);
-      \u0275\u0275text(205, " Follow-up Needed ");
-      \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(206, "td", 56)(207, "div", 63);
-      \u0275\u0275text(208, "Dr. Sarah Johnson");
-      \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(209, "td", 65)(210, "button", 66);
-      \u0275\u0275text(211, "View");
+      \u0275\u0275elementStart(161, "div")(162, "p", 21);
+      \u0275\u0275text(163, "Administered");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(212, "button", 67);
-      \u0275\u0275text(213, "Message");
+      \u0275\u0275elementStart(164, "p", 22);
+      \u0275\u0275text(165, "Oct 15, 2023");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(166, "div")(167, "p", 21);
+      \u0275\u0275text(168, "Lot Number");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(169, "p", 22);
+      \u0275\u0275text(170, "FLU12345");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(171, "div")(172, "p", 21);
+      \u0275\u0275text(173, "Administered By");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(174, "p", 22);
+      \u0275\u0275text(175, "Dr. Sarah Johnson");
+      \u0275\u0275elementEnd()()()()();
+      \u0275\u0275elementStart(176, "div")(177, "h4", 24);
+      \u0275\u0275element(178, "i", 43);
+      \u0275\u0275text(179, " New Family History ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(180, "div", 44)(181, "div", 42)(182, "div")(183, "p", 21);
+      \u0275\u0275text(184, "Family Member");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(185, "p", 22);
+      \u0275\u0275text(186, "Father");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(187, "div")(188, "p", 21);
+      \u0275\u0275text(189, "Condition");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(190, "p", 22);
+      \u0275\u0275text(191, "Heart Disease");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(192, "div")(193, "p", 21);
+      \u0275\u0275text(194, "Status");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(195, "p", 22);
+      \u0275\u0275text(196, "Deceased at age 68");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(197, "div")(198, "p", 21);
+      \u0275\u0275text(199, "Side of Family");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(200, "p", 22);
+      \u0275\u0275text(201, "Paternal");
+      \u0275\u0275elementEnd()()()()()()();
+      \u0275\u0275elementStart(202, "div", 14)(203, "div", 34)(204, "h3", 16);
+      \u0275\u0275text(205, "Verification");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(206, "div", 19)(207, "div", 45)(208, "div", 27);
+      \u0275\u0275element(209, "input", 46);
+      \u0275\u0275elementStart(210, "label", 47);
+      \u0275\u0275text(211, " I have verified that all patient information is accurate and complete ");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(212, "div", 27);
+      \u0275\u0275element(213, "input", 48);
+      \u0275\u0275elementStart(214, "label", 49);
+      \u0275\u0275text(215, " I confirm that the patient has provided consent for this information to be recorded ");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(216, "div", 27);
+      \u0275\u0275element(217, "input", 50);
+      \u0275\u0275elementStart(218, "label", 51);
+      \u0275\u0275text(219, " I have reviewed all new entries for accuracy and completeness ");
       \u0275\u0275elementEnd()()();
-      \u0275\u0275elementStart(214, "tr", 55)(215, "td", 56)(216, "div", 21)(217, "div", 57);
-      \u0275\u0275element(218, "img", 71);
+      \u0275\u0275elementStart(220, "div", 52)(221, "label", 53);
+      \u0275\u0275text(222, "Provider Name*");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(219, "div", 59)(220, "div", 60);
-      \u0275\u0275text(221, "Sarah Wilson");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(222, "div", 61);
-      \u0275\u0275text(223, "ID: #PAT-1004");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(224, "div", 62);
-      \u0275\u0275text(225, "Female, 29 years");
-      \u0275\u0275elementEnd()()()();
-      \u0275\u0275elementStart(226, "td", 56)(227, "div", 63);
-      \u0275\u0275text(228, "sarah.w_example.com");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(229, "div", 61);
-      \u0275\u0275text(230, "(555) 456-7890");
-      \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(231, "td", 56)(232, "div", 63);
-      \u0275\u0275text(233, "May 15, 2023");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(234, "div", 61);
-      \u0275\u0275text(235, "New Patient");
-      \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(236, "td", 56)(237, "span", 72);
-      \u0275\u0275text(238, " New ");
-      \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(239, "td", 56)(240, "div", 63);
-      \u0275\u0275text(241, "Dr. Michael Chen");
-      \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(242, "td", 65)(243, "button", 66);
-      \u0275\u0275text(244, "View");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(245, "button", 67);
-      \u0275\u0275text(246, "Message");
+      \u0275\u0275element(223, "input", 54);
       \u0275\u0275elementEnd()()();
-      \u0275\u0275elementStart(247, "tr", 55)(248, "td", 56)(249, "div", 21)(250, "div", 57);
-      \u0275\u0275element(251, "img", 73);
+      \u0275\u0275elementStart(224, "div", 55)(225, "button", 56);
+      \u0275\u0275element(226, "i", 57);
+      \u0275\u0275text(227, " Back to Edit ");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(252, "div", 59)(253, "div", 60);
-      \u0275\u0275text(254, "Robert Taylor");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(255, "div", 61);
-      \u0275\u0275text(256, "ID: #PAT-1005");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(257, "div", 62);
-      \u0275\u0275text(258, "Male, 64 years");
-      \u0275\u0275elementEnd()()()();
-      \u0275\u0275elementStart(259, "td", 56)(260, "div", 63);
-      \u0275\u0275text(261, "robert.t_example.com");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(262, "div", 61);
-      \u0275\u0275text(263, "(555) 567-8901");
-      \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(264, "td", 56)(265, "div", 63);
-      \u0275\u0275text(266, "Apr 30, 2023");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(267, "div", 61);
-      \u0275\u0275text(268, "Medication Review");
-      \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(269, "td", 56)(270, "span", 74);
-      \u0275\u0275text(271, " Inactive ");
-      \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(272, "td", 56)(273, "div", 63);
-      \u0275\u0275text(274, "Dr. Sarah Johnson");
-      \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(275, "td", 65)(276, "button", 66);
-      \u0275\u0275text(277, "View");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(278, "button", 67);
-      \u0275\u0275text(279, "Message");
+      \u0275\u0275elementStart(228, "button", 58);
+      \u0275\u0275element(229, "i", 59);
+      \u0275\u0275text(230, " Confirm and Submit ");
       \u0275\u0275elementEnd()()()()()();
-      \u0275\u0275elementStart(280, "div", 75)(281, "div", 76)(282, "a", 77);
-      \u0275\u0275text(283, " Previous ");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(284, "a", 78);
-      \u0275\u0275text(285, " Next ");
-      \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(286, "div", 79)(287, "div")(288, "p", 80);
-      \u0275\u0275text(289, " Showing ");
-      \u0275\u0275elementStart(290, "span", 81);
-      \u0275\u0275text(291, "1");
-      \u0275\u0275elementEnd();
-      \u0275\u0275text(292, " to ");
-      \u0275\u0275elementStart(293, "span", 81);
-      \u0275\u0275text(294, "5");
-      \u0275\u0275elementEnd();
-      \u0275\u0275text(295, " of ");
-      \u0275\u0275elementStart(296, "span", 81);
-      \u0275\u0275text(297, "24");
-      \u0275\u0275elementEnd();
-      \u0275\u0275text(298, " patients ");
-      \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(299, "div")(300, "nav", 82)(301, "a", 83)(302, "span", 84);
-      \u0275\u0275text(303, "Previous");
-      \u0275\u0275elementEnd();
-      \u0275\u0275element(304, "i", 85);
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(305, "a", 86);
-      \u0275\u0275text(306, " 1 ");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(307, "a", 87);
-      \u0275\u0275text(308, " 2 ");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(309, "a", 87);
-      \u0275\u0275text(310, " 3 ");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(311, "a", 88)(312, "span", 84);
-      \u0275\u0275text(313, "Next");
-      \u0275\u0275elementEnd();
-      \u0275\u0275element(314, "i", 89);
-      \u0275\u0275elementEnd()()()()()()()()()()();
     }
   }, encapsulation: 2 });
 };
 (() => {
   (typeof ngDevMode === "undefined" || ngDevMode) && setClassMetadata(TestComponent, [{
     type: Component,
-    args: [{ selector: "app-test", imports: [], template: '<!DOCTYPE html>\r\n<html lang="en">\r\n<head>\r\n    <meta charset="UTF-8">\r\n    <meta name="viewport" content="width=device-width, initial-scale=1.0">\r\n    <title>MediCare - Patient List</title>\r\n    <script src="https://cdn.tailwindcss.com"><\/script>\r\n    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">\r\n</head>\r\n<body class="bg-gray-100 font-sans">\r\n    <div class="flex h-screen overflow-hidden">\r\n        <!-- Sidebar -->\r\n        <div class="hidden md:flex md:flex-shrink-0">\r\n            <div class="flex flex-col w-64 bg-blue-800 text-white">\r\n                <div class="flex items-center justify-center h-16 px-4 bg-blue-900">\r\n                    <span class="text-xl font-semibold">MediCare</span>\r\n                </div>\r\n                <div class="flex flex-col flex-grow px-4 py-4 overflow-y-auto">\r\n                    <nav class="flex-1 space-y-2">\r\n                        <a href="#" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-blue-700">\r\n                            <i class="fas fa-tachometer-alt mr-3"></i>\r\n                            Dashboard\r\n                        </a>\r\n                        <a href="#" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg bg-blue-700">\r\n                            <i class="fas fa-users mr-3"></i>\r\n                            Patients\r\n                        </a>\r\n                        <a href="#" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-blue-700">\r\n                            <i class="fas fa-calendar-check mr-3"></i>\r\n                            Appointments\r\n                        </a>\r\n                        <a href="#" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-blue-700">\r\n                            <i class="fas fa-file-medical mr-3"></i>\r\n                            Medical Records\r\n                        </a>\r\n                        <a href="#" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-blue-700">\r\n                            <i class="fas fa-prescription mr-3"></i>\r\n                            Prescriptions\r\n                        </a>\r\n                    </nav>\r\n                </div>\r\n            </div>\r\n        </div>\r\n\r\n        <!-- Main Content -->\r\n        <div class="flex flex-col flex-1 overflow-hidden">\r\n            <!-- Top Navigation -->\r\n            <header class="flex items-center justify-between px-6 py-4 bg-white border-b border-gray-200">\r\n                <div class="flex items-center">\r\n                    <button class="md:hidden mr-4 text-gray-500">\r\n                        <i class="fas fa-bars"></i>\r\n                    </button>\r\n                    <h1 class="text-xl font-semibold text-gray-800">Patient List</h1>\r\n                </div>\r\n                <div class="flex items-center space-x-4">\r\n                    <button class="p-2 text-gray-500 rounded-full hover:bg-gray-100">\r\n                        <i class="fas fa-bell"></i>\r\n                    </button>\r\n                    <div class="relative">\r\n                        <input type="text" placeholder="Search..." class="pl-10 pr-4 py-2 border rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">\r\n                        <i class="fas fa-search absolute left-3 top-2.5 text-gray-400"></i>\r\n                    </div>\r\n                </div>\r\n            </header>\r\n\r\n            <!-- Main Content Area -->\r\n            <main class="flex-1 overflow-y-auto p-6 bg-gray-100">\r\n                <!-- Patient List Header -->\r\n                <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">\r\n                    <div>\r\n                        <h2 class="text-xl font-semibold text-gray-800">All Patients</h2>\r\n                        <p class="text-sm text-gray-600 mt-1">Manage your patient records and information</p>\r\n                    </div>\r\n                    <div class="mt-4 md:mt-0 flex space-x-3">\r\n                        <div class="relative">\r\n                            <input type="text" placeholder="Search patients..." class="pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">\r\n                            <i class="fas fa-search absolute left-3 top-2.5 text-gray-400"></i>\r\n                        </div>\r\n                        <button class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center">\r\n                            <i class="fas fa-plus mr-2"></i> New Patient\r\n                        </button>\r\n                    </div>\r\n                </div>\r\n\r\n                <!-- Patient Filters -->\r\n                <div class="bg-white rounded-lg shadow p-4 mb-6">\r\n                    <div class="flex flex-wrap items-center gap-4">\r\n                        <div class="flex items-center">\r\n                            <label for="status-filter" class="mr-2 text-sm text-gray-600">Status:</label>\r\n                            <select id="status-filter" class="border rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">\r\n                                <option>All Patients</option>\r\n                                <option>Active</option>\r\n                                <option>Inactive</option>\r\n                                <option>New</option>\r\n                            </select>\r\n                        </div>\r\n                        <div class="flex items-center">\r\n                            <label for="doctor-filter" class="mr-2 text-sm text-gray-600">Doctor:</label>\r\n                            <select id="doctor-filter" class="border rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">\r\n                                <option>All Doctors</option>\r\n                                <option>Dr. Sarah Johnson</option>\r\n                                <option>Dr. Michael Chen</option>\r\n                            </select>\r\n                        </div>\r\n                        <div class="flex items-center">\r\n                            <label for="date-filter" class="mr-2 text-sm text-gray-600">Last Visit:</label>\r\n                            <select id="date-filter" class="border rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">\r\n                                <option>Any Time</option>\r\n                                <option>Last 30 Days</option>\r\n                                <option>Last 3 Months</option>\r\n                                <option>Last Year</option>\r\n                            </select>\r\n                        </div>\r\n                        <button class="ml-auto text-sm text-blue-600 hover:text-blue-800 flex items-center">\r\n                            <i class="fas fa-filter mr-1"></i> Advanced Filters\r\n                        </button>\r\n                    </div>\r\n                </div>\r\n\r\n                <!-- Patient List -->\r\n                <div class="bg-white rounded-lg shadow overflow-hidden">\r\n                    <div class="overflow-x-auto">\r\n                        <table class="min-w-full divide-y divide-gray-200">\r\n                            <thead class="bg-gray-50">\r\n                                <tr>\r\n                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Patient</th>\r\n                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Contact</th>\r\n                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Last Visit</th>\r\n                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>\r\n                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Primary Doctor</th>\r\n                                    <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>\r\n                                </tr>\r\n                            </thead>\r\n                            <tbody class="bg-white divide-y divide-gray-200">\r\n                                <!-- Patient 1 -->\r\n                                <tr class="hover:bg-gray-50">\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="flex items-center">\r\n                                            <div class="flex-shrink-0 h-10 w-10">\r\n                                                <img class="h-10 w-10 rounded-full" src="https://randomuser.me/api/portraits/men/32.jpg" alt="">\r\n                                            </div>\r\n                                            <div class="ml-4">\r\n                                                <div class="text-sm font-medium text-gray-900">John Smith</div>\r\n                                                <div class="text-sm text-gray-500">ID: #PAT-1001</div>\r\n                                                <div class="text-xs text-gray-400">Male, 42 years</div>\r\n                                            </div>\r\n                                        </div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">john.smith_example.com</div>\r\n                                        <div class="text-sm text-gray-500">(555) 123-4567</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">Jun 15, 2023</div>\r\n                                        <div class="text-sm text-gray-500">Follow-up</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">\r\n                                            Active\r\n                                        </span>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">Dr. Sarah Johnson</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">\r\n                                        <button class="text-blue-600 hover:text-blue-900 mr-3">View</button>\r\n                                        <button class="text-gray-600 hover:text-gray-900">Message</button>\r\n                                    </td>\r\n                                </tr>\r\n\r\n                                <!-- Patient 2 -->\r\n                                <tr class="hover:bg-gray-50">\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="flex items-center">\r\n                                            <div class="flex-shrink-0 h-10 w-10">\r\n                                                <img class="h-10 w-10 rounded-full" src="https://randomuser.me/api/portraits/women/44.jpg" alt="">\r\n                                            </div>\r\n                                            <div class="ml-4">\r\n                                                <div class="text-sm font-medium text-gray-900">Emily Johnson</div>\r\n                                                <div class="text-sm text-gray-500">ID: #PAT-1002</div>\r\n                                                <div class="text-xs text-gray-400">Female, 35 years</div>\r\n                                            </div>\r\n                                        </div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">emily.j_example.com</div>\r\n                                        <div class="text-sm text-gray-500">(555) 234-5678</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">Jun 10, 2023</div>\r\n                                        <div class="text-sm text-gray-500">Annual Checkup</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">\r\n                                            Active\r\n                                        </span>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">Dr. Michael Chen</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">\r\n                                        <button class="text-blue-600 hover:text-blue-900 mr-3">View</button>\r\n                                        <button class="text-gray-600 hover:text-gray-900">Message</button>\r\n                                    </td>\r\n                                </tr>\r\n\r\n                                <!-- Patient 3 -->\r\n                                <tr class="hover:bg-gray-50">\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="flex items-center">\r\n                                            <div class="flex-shrink-0 h-10 w-10">\r\n                                                <img class="h-10 w-10 rounded-full" src="https://randomuser.me/api/portraits/men/75.jpg" alt="">\r\n                                            </div>\r\n                                            <div class="ml-4">\r\n                                                <div class="text-sm font-medium text-gray-900">Michael Brown</div>\r\n                                                <div class="text-sm text-gray-500">ID: #PAT-1003</div>\r\n                                                <div class="text-xs text-gray-400">Male, 58 years</div>\r\n                                            </div>\r\n                                        </div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">michael.b_example.com</div>\r\n                                        <div class="text-sm text-gray-500">(555) 345-6789</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">May 28, 2023</div>\r\n                                        <div class="text-sm text-gray-500">Lab Results</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">\r\n                                            Follow-up Needed\r\n                                        </span>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">Dr. Sarah Johnson</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">\r\n                                        <button class="text-blue-600 hover:text-blue-900 mr-3">View</button>\r\n                                        <button class="text-gray-600 hover:text-gray-900">Message</button>\r\n                                    </td>\r\n                                </tr>\r\n\r\n                                <!-- Patient 4 -->\r\n                                <tr class="hover:bg-gray-50">\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="flex items-center">\r\n                                            <div class="flex-shrink-0 h-10 w-10">\r\n                                                <img class="h-10 w-10 rounded-full" src="https://randomuser.me/api/portraits/women/68.jpg" alt="">\r\n                                            </div>\r\n                                            <div class="ml-4">\r\n                                                <div class="text-sm font-medium text-gray-900">Sarah Wilson</div>\r\n                                                <div class="text-sm text-gray-500">ID: #PAT-1004</div>\r\n                                                <div class="text-xs text-gray-400">Female, 29 years</div>\r\n                                            </div>\r\n                                        </div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">sarah.w_example.com</div>\r\n                                        <div class="text-sm text-gray-500">(555) 456-7890</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">May 15, 2023</div>\r\n                                        <div class="text-sm text-gray-500">New Patient</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">\r\n                                            New\r\n                                        </span>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">Dr. Michael Chen</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">\r\n                                        <button class="text-blue-600 hover:text-blue-900 mr-3">View</button>\r\n                                        <button class="text-gray-600 hover:text-gray-900">Message</button>\r\n                                    </td>\r\n                                </tr>\r\n\r\n                                <!-- Patient 5 -->\r\n                                <tr class="hover:bg-gray-50">\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="flex items-center">\r\n                                            <div class="flex-shrink-0 h-10 w-10">\r\n                                                <img class="h-10 w-10 rounded-full" src="https://randomuser.me/api/portraits/men/22.jpg" alt="">\r\n                                            </div>\r\n                                            <div class="ml-4">\r\n                                                <div class="text-sm font-medium text-gray-900">Robert Taylor</div>\r\n                                                <div class="text-sm text-gray-500">ID: #PAT-1005</div>\r\n                                                <div class="text-xs text-gray-400">Male, 64 years</div>\r\n                                            </div>\r\n                                        </div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">robert.t_example.com</div>\r\n                                        <div class="text-sm text-gray-500">(555) 567-8901</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">Apr 30, 2023</div>\r\n                                        <div class="text-sm text-gray-500">Medication Review</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800">\r\n                                            Inactive\r\n                                        </span>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">Dr. Sarah Johnson</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">\r\n                                        <button class="text-blue-600 hover:text-blue-900 mr-3">View</button>\r\n                                        <button class="text-gray-600 hover:text-gray-900">Message</button>\r\n                                    </td>\r\n                                </tr>\r\n                            </tbody>\r\n                        </table>\r\n                    </div>\r\n\r\n                    <!-- Pagination -->\r\n                    <div class="bg-gray-50 px-6 py-3 flex items-center justify-between border-t border-gray-200">\r\n                        <div class="flex-1 flex justify-between sm:hidden">\r\n                            <a href="#" class="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">\r\n                                Previous\r\n                            </a>\r\n                            <a href="#" class="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">\r\n                                Next\r\n                            </a>\r\n                        </div>\r\n                        <div class="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">\r\n                            <div>\r\n                                <p class="text-sm text-gray-700">\r\n                                    Showing <span class="font-medium">1</span> to <span class="font-medium">5</span> of <span class="font-medium">24</span> patients\r\n                                </p>\r\n                            </div>\r\n                            <div>\r\n                                <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">\r\n                                    <a href="#" class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">\r\n                                        <span class="sr-only">Previous</span>\r\n                                        <i class="fas fa-chevron-left"></i>\r\n                                    </a>\r\n                                    <a href="#" aria-current="page" class="z-10 bg-blue-50 border-blue-500 text-blue-600 relative inline-flex items-center px-4 py-2 border text-sm font-medium">\r\n                                        1\r\n                                    </a>\r\n                                    <a href="#" class="bg-white border-gray-300 text-gray-500 hover:bg-gray-50 relative inline-flex items-center px-4 py-2 border text-sm font-medium">\r\n                                        2\r\n                                    </a>\r\n                                    <a href="#" class="bg-white border-gray-300 text-gray-500 hover:bg-gray-50 relative inline-flex items-center px-4 py-2 border text-sm font-medium">\r\n                                        3\r\n                                    </a>\r\n                                    <a href="#" class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">\r\n                                        <span class="sr-only">Next</span>\r\n                                        <i class="fas fa-chevron-right"></i>\r\n                                    </a>\r\n                                </nav>\r\n                            </div>\r\n                        </div>\r\n                    </div>\r\n                </div>\r\n            </main>\r\n        </div>\r\n    </div>\r\n</body>\r\n</html>\r\n' }]
+    args: [{ selector: "app-test", imports: [], template: '<!DOCTYPE html>\r\n<html lang="en">\r\n<head>\r\n    <meta charset="UTF-8">\r\n    <meta name="viewport" content="width=device-width, initial-scale=1.0">\r\n    <title>Patient Review</title>\r\n    <script src="https://cdn.tailwindcss.com"><\/script>\r\n    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">\r\n</head>\r\n<body class="bg-gray-50 font-sans">\r\n    <div class="container mx-auto px-4 py-8">\r\n        <!-- Header -->\r\n        <div class="flex justify-between items-center mb-8">\r\n            <div>\r\n                <h1 class="text-3xl font-bold text-blue-800">Patient Review</h1>\r\n                <p class="text-gray-600">Verify patient information before submission</p>\r\n            </div>\r\n            <div class="flex items-center space-x-4">\r\n                <span class="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">Pending Review</span>\r\n                <button class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center">\r\n                    <i class="fas fa-print mr-2"></i> Print\r\n                </button>\r\n            </div>\r\n        </div>\r\n\r\n        <!-- Review Sections -->\r\n        <div class="space-y-6">\r\n            <!-- Patient Information Card -->\r\n            <div class="bg-white rounded-xl shadow-md overflow-hidden">\r\n                <div class="border-b border-gray-200 px-6 py-4 flex justify-between items-center">\r\n                    <h3 class="text-lg font-semibold text-gray-800">Patient Information</h3>\r\n                    <button class="text-blue-600 hover:text-blue-800 text-sm">\r\n                        <i class="fas fa-edit mr-1"></i> Edit\r\n                    </button>\r\n                </div>\r\n                <div class="p-6">\r\n                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">\r\n                        <div>\r\n                            <p class="text-sm text-gray-500">Full Name</p>\r\n                            <p class="font-medium">John Michael Doe</p>\r\n                        </div>\r\n                        <div>\r\n                            <p class="text-sm text-gray-500">Date of Birth</p>\r\n                            <p class="font-medium">May 15, 1985 (38 years)</p>\r\n                        </div>\r\n                        <div>\r\n                            <p class="text-sm text-gray-500">Gender</p>\r\n                            <p class="font-medium">Male</p>\r\n                        </div>\r\n                        <div>\r\n                            <p class="text-sm text-gray-500">Patient ID</p>\r\n                            <p class="font-medium">P-123456</p>\r\n                        </div>\r\n                    </div>\r\n                </div>\r\n            </div>\r\n\r\n            <!-- Medical History Summary -->\r\n            <div class="bg-white rounded-xl shadow-md overflow-hidden">\r\n                <div class="border-b border-gray-200 px-6 py-4 flex justify-between items-center">\r\n                    <h3 class="text-lg font-semibold text-gray-800">Medical History Summary</h3>\r\n                    <button class="text-blue-600 hover:text-blue-800 text-sm">\r\n                        <i class="fas fa-edit mr-1"></i> Edit\r\n                    </button>\r\n                </div>\r\n                <div class="p-6">\r\n                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">\r\n                        <!-- Conditions -->\r\n                        <div>\r\n                            <h4 class="font-medium text-gray-700 mb-3 flex items-center">\r\n                                <i class="fas fa-disease text-blue-500 mr-2"></i> Conditions\r\n                            </h4>\r\n                            <ul class="space-y-2">\r\n                                <li class="flex items-start">\r\n                                    <span class="text-green-500 mr-2">\u2022</span>\r\n                                    <span>Type 2 Diabetes (2018)</span>\r\n                                </li>\r\n                                <li class="flex items-start">\r\n                                    <span class="text-green-500 mr-2">\u2022</span>\r\n                                    <span>Hypertension (2019)</span>\r\n                                </li>\r\n                                <li class="flex items-start">\r\n                                    <span class="text-green-500 mr-2">\u2022</span>\r\n                                    <span>Hyperlipidemia (2020)</span>\r\n                                </li>\r\n                            </ul>\r\n                        </div>\r\n\r\n                        <!-- Allergies -->\r\n                        <div>\r\n                            <h4 class="font-medium text-gray-700 mb-3 flex items-center">\r\n                                <i class="fas fa-allergy text-red-500 mr-2"></i> Allergies\r\n                            </h4>\r\n                            <ul class="space-y-2">\r\n                                <li class="flex items-start">\r\n                                    <span class="text-red-500 mr-2">\u2022</span>\r\n                                    <span>Penicillin (Severe)</span>\r\n                                </li>\r\n                                <li class="flex items-start">\r\n                                    <span class="text-yellow-500 mr-2">\u2022</span>\r\n                                    <span>Sulfa Drugs (Moderate)</span>\r\n                                </li>\r\n                            </ul>\r\n                        </div>\r\n\r\n                        <!-- Medications -->\r\n                        <div>\r\n                            <h4 class="font-medium text-gray-700 mb-3 flex items-center">\r\n                                <i class="fas fa-pills text-purple-500 mr-2"></i> Medications\r\n                            </h4>\r\n                            <ul class="space-y-2">\r\n                                <li class="flex items-start">\r\n                                    <span class="text-purple-500 mr-2">\u2022</span>\r\n                                    <span>Lisinopril 10mg daily</span>\r\n                                </li>\r\n                                <li class="flex items-start">\r\n                                    <span class="text-purple-500 mr-2">\u2022</span>\r\n                                    <span>Atorvastatin 20mg daily</span>\r\n                                </li>\r\n                                <li class="flex items-start">\r\n                                    <span class="text-purple-500 mr-2">\u2022</span>\r\n                                    <span>Metformin 500mg twice daily</span>\r\n                                </li>\r\n                            </ul>\r\n                        </div>\r\n                    </div>\r\n                </div>\r\n            </div>\r\n\r\n            <!-- New Entries Review -->\r\n            <div class="bg-white rounded-xl shadow-md overflow-hidden">\r\n                <div class="border-b border-gray-200 px-6 py-4">\r\n                    <h3 class="text-lg font-semibold text-gray-800">New Entries to Be Added</h3>\r\n                </div>\r\n                <div class="p-6">\r\n                    <!-- Vital Signs -->\r\n                    <div class="mb-6">\r\n                        <h4 class="font-medium text-gray-700 mb-3 flex items-center">\r\n                            <i class="fas fa-heartbeat text-blue-500 mr-2"></i> Vital Signs\r\n                        </h4>\r\n                        <div class="bg-blue-50 p-4 rounded-lg">\r\n                            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">\r\n                                <div>\r\n                                    <p class="text-sm text-gray-500">Blood Pressure</p>\r\n                                    <p class="font-medium">128/82 mmHg</p>\r\n                                </div>\r\n                                <div>\r\n                                    <p class="text-sm text-gray-500">Heart Rate</p>\r\n                                    <p class="font-medium">72 bpm</p>\r\n                                </div>\r\n                                <div>\r\n                                    <p class="text-sm text-gray-500">Temperature</p>\r\n                                    <p class="font-medium">36.8 \xB0C</p>\r\n                                </div>\r\n                                <div>\r\n                                    <p class="text-sm text-gray-500">SpO\u2082</p>\r\n                                    <p class="font-medium">98%</p>\r\n                                </div>\r\n                            </div>\r\n                            <div class="mt-3 text-sm text-gray-500">\r\n                                Recorded: <span class="font-medium">Today at 10:30 AM</span>\r\n                            </div>\r\n                        </div>\r\n                    </div>\r\n\r\n                    <!-- New Immunization -->\r\n                    <div class="mb-6">\r\n                        <h4 class="font-medium text-gray-700 mb-3 flex items-center">\r\n                            <i class="fas fa-syringe text-green-500 mr-2"></i> New Immunization\r\n                        </h4>\r\n                        <div class="bg-green-50 p-4 rounded-lg">\r\n                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">\r\n                                <div>\r\n                                    <p class="text-sm text-gray-500">Vaccine</p>\r\n                                    <p class="font-medium">Influenza (Seasonal 2023-2024)</p>\r\n                                </div>\r\n                                <div>\r\n                                    <p class="text-sm text-gray-500">Administered</p>\r\n                                    <p class="font-medium">Oct 15, 2023</p>\r\n                                </div>\r\n                                <div>\r\n                                    <p class="text-sm text-gray-500">Lot Number</p>\r\n                                    <p class="font-medium">FLU12345</p>\r\n                                </div>\r\n                                <div>\r\n                                    <p class="text-sm text-gray-500">Administered By</p>\r\n                                    <p class="font-medium">Dr. Sarah Johnson</p>\r\n                                </div>\r\n                            </div>\r\n                        </div>\r\n                    </div>\r\n\r\n                    <!-- New Family History -->\r\n                    <div>\r\n                        <h4 class="font-medium text-gray-700 mb-3 flex items-center">\r\n                            <i class="fas fa-family text-purple-500 mr-2"></i> New Family History\r\n                        </h4>\r\n                        <div class="bg-purple-50 p-4 rounded-lg">\r\n                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">\r\n                                <div>\r\n                                    <p class="text-sm text-gray-500">Family Member</p>\r\n                                    <p class="font-medium">Father</p>\r\n                                </div>\r\n                                <div>\r\n                                    <p class="text-sm text-gray-500">Condition</p>\r\n                                    <p class="font-medium">Heart Disease</p>\r\n                                </div>\r\n                                <div>\r\n                                    <p class="text-sm text-gray-500">Status</p>\r\n                                    <p class="font-medium">Deceased at age 68</p>\r\n                                </div>\r\n                                <div>\r\n                                    <p class="text-sm text-gray-500">Side of Family</p>\r\n                                    <p class="font-medium">Paternal</p>\r\n                                </div>\r\n                            </div>\r\n                        </div>\r\n                    </div>\r\n                </div>\r\n            </div>\r\n\r\n            <!-- Verification Section -->\r\n            <div class="bg-white rounded-xl shadow-md overflow-hidden">\r\n                <div class="border-b border-gray-200 px-6 py-4">\r\n                    <h3 class="text-lg font-semibold text-gray-800">Verification</h3>\r\n                </div>\r\n                <div class="p-6">\r\n                    <div class="space-y-4">\r\n                        <div class="flex items-start">\r\n                            <input type="checkbox" id="verifyInfo" class="mt-1 h-4 w-4 text-blue-600 focus:ring-blue-500 rounded">\r\n                            <label for="verifyInfo" class="ml-2 block text-sm text-gray-700">\r\n                                I have verified that all patient information is accurate and complete\r\n                            </label>\r\n                        </div>\r\n                        <div class="flex items-start">\r\n                            <input type="checkbox" id="verifyConsent" class="mt-1 h-4 w-4 text-blue-600 focus:ring-blue-500 rounded">\r\n                            <label for="verifyConsent" class="ml-2 block text-sm text-gray-700">\r\n                                I confirm that the patient has provided consent for this information to be recorded\r\n                            </label>\r\n                        </div>\r\n                        <div class="flex items-start">\r\n                            <input type="checkbox" id="verifyReview" class="mt-1 h-4 w-4 text-blue-600 focus:ring-blue-500 rounded">\r\n                            <label for="verifyReview" class="ml-2 block text-sm text-gray-700">\r\n                                I have reviewed all new entries for accuracy and completeness\r\n                            </label>\r\n                        </div>\r\n                    </div>\r\n\r\n                    <!-- Provider Signature -->\r\n                    <div class="mt-6">\r\n                        <label for="providerName" class="block text-sm font-medium text-gray-700 mb-1">Provider Name*</label>\r\n                        <input type="text" id="providerName" class="w-full md:w-1/2 px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="Your full name">\r\n                    </div>\r\n                </div>\r\n            </div>\r\n\r\n            <!-- Action Buttons -->\r\n            <div class="flex justify-between pt-6">\r\n                <button class="px-6 py-3 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">\r\n                    <i class="fas fa-arrow-left mr-2"></i> Back to Edit\r\n                </button>\r\n                <button class="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2">\r\n                    <i class="fas fa-check-circle mr-2"></i> Confirm and Submit\r\n                </button>\r\n            </div>\r\n        </div>\r\n    </div>\r\n</body>\r\n</html>\r\n' }]
   }], null, null);
 })();
 (() => {
@@ -43001,12 +43051,12 @@ var LeftBarComponent = class _LeftBarComponent {
     this.route = route;
   }
   patientPage() {
-    this.router.navigate([this.router.url + "/" + NEW_PATIENT]);
+    this.router.navigate([this.router.url + "/" + PATIENT_PATH]);
   }
   static \u0275fac = function LeftBarComponent_Factory(__ngFactoryType__) {
     return new (__ngFactoryType__ || _LeftBarComponent)(\u0275\u0275directiveInject(Router), \u0275\u0275directiveInject(ActivatedRoute));
   };
-  static \u0275cmp = /* @__PURE__ */ \u0275\u0275defineComponent({ type: _LeftBarComponent, selectors: [["app-left-bar"]], decls: 42, vars: 0, consts: [[1, "hidden", "md:flex", "md:flex-shrink-0"], [1, "flex", "flex-col", "h-screen", "w-64", "bg-blue-800", "text-white"], [1, "flex", "items-center", "justify-center", "h-16", "px-4", "bg-blue-900"], [1, "text-xl", "font-semibold"], [1, "flex", "flex-col", "flex-grow", "px-4", "py-4"], [1, "flex-1", "space-y-2"], ["href", "/home", 1, "flex", "items-center", "px-4", "py-3", "text-sm", "font-medium", "rounded-lg", "bg-blue-700"], [1, "fas", "fa-tachometer-alt", "mr-3"], ["href", "/home", 1, "flex", "items-center", "px-4", "py-3", "text-sm", "font-medium", "rounded-lg", "hover:bg-blue-700"], [1, "fas", "fa-calendar-check", "mr-3"], ["href", "/home/new-patient", 1, "flex", "items-center", "px-4", "py-3", "text-sm", "font-medium", "rounded-lg", "hover:bg-blue-700"], [1, "fas", "fa-users", "mr-3"], ["href", "/home/billing", 1, "flex", "items-center", "px-4", "py-3", "text-sm", "font-medium", "rounded-lg", "hover:bg-blue-700"], ["href", "#", 1, "flex", "items-center", "px-4", "py-3", "text-sm", "font-medium", "rounded-lg", "hover:bg-blue-700"], [1, "fas", "fa-file-medical", "mr-3"], ["href", "/home/task", 1, "flex", "items-center", "px-4", "py-3", "text-sm", "font-medium", "rounded-lg", "hover:bg-blue-700"], [1, "fas", "fa-prescription", "mr-3"], [1, "fas", "fa-chart-line", "mr-3"], ["href", "/home/staff", 1, "flex", "items-center", "px-4", "py-3", "text-sm", "font-medium", "rounded-lg", "hover:bg-blue-700"], [1, "fas", "fa-cog", "mr-3"], [1, "p-4", "border-t", "border-blue-700"], [1, "flex", "items-center"], ["src", "https://via.placeholder.com/40", "alt", "Doctor", 1, "w-10", "h-10", "rounded-full"], [1, "ml-3"], [1, "text-sm", "font-medium"], [1, "text-xs", "text-blue-200"]], template: function LeftBarComponent_Template(rf, ctx) {
+  static \u0275cmp = /* @__PURE__ */ \u0275\u0275defineComponent({ type: _LeftBarComponent, selectors: [["app-left-bar"]], decls: 42, vars: 0, consts: [[1, "hidden", "md:flex", "md:flex-shrink-0"], [1, "flex", "flex-col", "h-screen", "w-64", "bg-blue-800", "text-white"], [1, "flex", "items-center", "justify-center", "h-16", "px-4", "bg-blue-900"], [1, "text-xl", "font-semibold"], [1, "flex", "flex-col", "flex-grow", "px-4", "py-4"], [1, "flex-1", "space-y-2"], ["href", "/home", 1, "flex", "items-center", "px-4", "py-3", "text-sm", "font-medium", "rounded-lg", "bg-blue-700"], [1, "fas", "fa-tachometer-alt", "mr-3"], ["href", "/home", 1, "flex", "items-center", "px-4", "py-3", "text-sm", "font-medium", "rounded-lg", "hover:bg-blue-700"], [1, "fas", "fa-calendar-check", "mr-3"], ["href", "/home/patient", 1, "flex", "items-center", "px-4", "py-3", "text-sm", "font-medium", "rounded-lg", "hover:bg-blue-700"], [1, "fas", "fa-users", "mr-3"], ["href", "/home/billing", 1, "flex", "items-center", "px-4", "py-3", "text-sm", "font-medium", "rounded-lg", "hover:bg-blue-700"], ["href", "#", 1, "flex", "items-center", "px-4", "py-3", "text-sm", "font-medium", "rounded-lg", "hover:bg-blue-700"], [1, "fas", "fa-file-medical", "mr-3"], ["href", "/home/task", 1, "flex", "items-center", "px-4", "py-3", "text-sm", "font-medium", "rounded-lg", "hover:bg-blue-700"], [1, "fas", "fa-prescription", "mr-3"], [1, "fas", "fa-chart-line", "mr-3"], ["href", "/home/staff", 1, "flex", "items-center", "px-4", "py-3", "text-sm", "font-medium", "rounded-lg", "hover:bg-blue-700"], [1, "fas", "fa-cog", "mr-3"], [1, "p-4", "border-t", "border-blue-700"], [1, "flex", "items-center"], ["src", "https://via.placeholder.com/40", "alt", "Doctor", 1, "w-10", "h-10", "rounded-full"], [1, "ml-3"], [1, "text-sm", "font-medium"], [1, "text-xs", "text-blue-200"]], template: function LeftBarComponent_Template(rf, ctx) {
     if (rf & 1) {
       \u0275\u0275elementStart(0, "div", 0)(1, "div", 1)(2, "div", 2)(3, "span", 3);
       \u0275\u0275text(4, "MediCare");
@@ -43061,7 +43111,7 @@ var LeftBarComponent = class _LeftBarComponent {
 (() => {
   (typeof ngDevMode === "undefined" || ngDevMode) && setClassMetadata(LeftBarComponent, [{
     type: Component,
-    args: [{ selector: "app-left-bar", imports: [], template: '<!-- Left Sidebar -->\r\n<div class="hidden md:flex md:flex-shrink-0">\r\n  <div class="flex flex-col h-screen w-64 bg-blue-800 text-white">\r\n    <div class="flex items-center justify-center h-16 px-4 bg-blue-900">\r\n      <span class="text-xl font-semibold">MediCare</span>\r\n    </div>\r\n    <div class="flex flex-col flex-grow px-4 py-4 ">\r\n      <nav class="flex-1 space-y-2">\r\n        <a href="/home" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg bg-blue-700">\r\n          <i class="fas fa-tachometer-alt mr-3"></i>\r\n          Dashboard\r\n        </a>\r\n        <a href="/home" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-blue-700">\r\n          <i class="fas fa-calendar-check mr-3"></i>\r\n          Appointments\r\n        </a>\r\n        <a href="/home/new-patient" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-blue-700">\r\n          <i class="fas fa-users mr-3"></i>\r\n          Patients\r\n        </a>\r\n        <a href="/home/billing" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-blue-700">\r\n          <i class="fas fa-users mr-3"></i>\r\n          Billings\r\n        </a>\r\n        <a href="#" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-blue-700">\r\n          <i class="fas fa-file-medical mr-3"></i>\r\n          Medical Records\r\n        </a>\r\n        <a href="/home/task" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-blue-700">\r\n          <i class="fas fa-file-medical mr-3"></i>\r\n          Tasks\r\n        </a>\r\n        <a href="#" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-blue-700">\r\n          <i class="fas fa-prescription mr-3"></i>\r\n          Prescriptions\r\n        </a>\r\n        <a href="#" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-blue-700">\r\n          <i class="fas fa-chart-line mr-3"></i>\r\n          Analytics\r\n        </a>\r\n        <a href="/home/staff" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-blue-700">\r\n          <i class="fas fa-cog mr-3"></i>\r\n          Settings\r\n        </a>\r\n      </nav>\r\n    </div>\r\n    <div class="p-4 border-t border-blue-700">\r\n      <div class="flex items-center">\r\n        <img class="w-10 h-10 rounded-full" src="https://via.placeholder.com/40" alt="Doctor">\r\n        <div class="ml-3">\r\n          <p class="text-sm font-medium">Dr. Sarah Johnson</p>\r\n          <p class="text-xs text-blue-200">Cardiologist</p>\r\n        </div>\r\n      </div>\r\n    </div>\r\n  </div>\r\n</div>\r\n' }]
+    args: [{ selector: "app-left-bar", imports: [], template: '<!-- Left Sidebar -->\r\n<div class="hidden md:flex md:flex-shrink-0">\r\n  <div class="flex flex-col h-screen w-64 bg-blue-800 text-white">\r\n    <div class="flex items-center justify-center h-16 px-4 bg-blue-900">\r\n      <span class="text-xl font-semibold">MediCare</span>\r\n    </div>\r\n    <div class="flex flex-col flex-grow px-4 py-4 ">\r\n      <nav class="flex-1 space-y-2">\r\n        <a href="/home" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg bg-blue-700">\r\n          <i class="fas fa-tachometer-alt mr-3"></i>\r\n          Dashboard\r\n        </a>\r\n        <a href="/home" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-blue-700">\r\n          <i class="fas fa-calendar-check mr-3"></i>\r\n          Appointments\r\n        </a>\r\n        <a href="/home/patient" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-blue-700">\r\n          <i class="fas fa-users mr-3"></i>\r\n          Patients\r\n        </a>\r\n        <a href="/home/billing" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-blue-700">\r\n          <i class="fas fa-users mr-3"></i>\r\n          Billings\r\n        </a>\r\n        <a href="#" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-blue-700">\r\n          <i class="fas fa-file-medical mr-3"></i>\r\n          Medical Records\r\n        </a>\r\n        <a href="/home/task" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-blue-700">\r\n          <i class="fas fa-file-medical mr-3"></i>\r\n          Tasks\r\n        </a>\r\n        <a href="#" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-blue-700">\r\n          <i class="fas fa-prescription mr-3"></i>\r\n          Prescriptions\r\n        </a>\r\n        <a href="#" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-blue-700">\r\n          <i class="fas fa-chart-line mr-3"></i>\r\n          Analytics\r\n        </a>\r\n        <a href="/home/staff" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg hover:bg-blue-700">\r\n          <i class="fas fa-cog mr-3"></i>\r\n          Settings\r\n        </a>\r\n      </nav>\r\n    </div>\r\n    <div class="p-4 border-t border-blue-700">\r\n      <div class="flex items-center">\r\n        <img class="w-10 h-10 rounded-full" src="https://via.placeholder.com/40" alt="Doctor">\r\n        <div class="ml-3">\r\n          <p class="text-sm font-medium">Dr. Sarah Johnson</p>\r\n          <p class="text-xs text-blue-200">Cardiologist</p>\r\n        </div>\r\n      </div>\r\n    </div>\r\n  </div>\r\n</div>\r\n' }]
   }], () => [{ type: Router }, { type: ActivatedRoute }], null);
 })();
 (() => {
@@ -43945,7 +43995,7 @@ function applyStyles(_ref) {
     });
   });
 }
-function effect(_ref2) {
+function effect2(_ref2) {
   var state = _ref2.state;
   var initialStyles = {
     popper: {
@@ -43988,7 +44038,7 @@ var applyStyles_default = {
   enabled: true,
   phase: "write",
   fn: applyStyles,
-  effect,
+  effect: effect2,
   requires: ["computeStyles"]
 };
 
@@ -44237,7 +44287,7 @@ function arrow(_ref) {
   var axisProp = axis;
   state.modifiersData[name] = (_state$modifiersData$ = {}, _state$modifiersData$[axisProp] = offset2, _state$modifiersData$.centerOffset = offset2 - center, _state$modifiersData$);
 }
-function effect2(_ref2) {
+function effect3(_ref2) {
   var state = _ref2.state, options = _ref2.options;
   var _options$element = options.element, arrowElement = _options$element === void 0 ? "[data-popper-arrow]" : _options$element;
   if (arrowElement == null) {
@@ -44259,7 +44309,7 @@ var arrow_default = {
   enabled: true,
   phase: "main",
   fn: arrow,
-  effect: effect2,
+  effect: effect3,
   requires: ["popperOffsets"],
   requiresIfExists: ["preventOverflow"]
 };
@@ -44394,7 +44444,7 @@ var computeStyles_default = {
 var passive = {
   passive: true
 };
-function effect3(_ref) {
+function effect4(_ref) {
   var state = _ref.state, instance = _ref.instance, options = _ref.options;
   var _options$scroll = options.scroll, scroll = _options$scroll === void 0 ? true : _options$scroll, _options$resize = options.resize, resize = _options$resize === void 0 ? true : _options$resize;
   var window2 = getWindow(state.elements.popper);
@@ -44424,7 +44474,7 @@ var eventListeners_default = {
   phase: "write",
   fn: function fn() {
   },
-  effect: effect3,
+  effect: effect4,
   data: {}
 };
 
@@ -45287,9 +45337,9 @@ function popperGenerator(generatorOptions) {
     });
     function runModifierEffects() {
       state.orderedModifiers.forEach(function(_ref) {
-        var name = _ref.name, _ref$options = _ref.options, options2 = _ref$options === void 0 ? {} : _ref$options, effect4 = _ref.effect;
-        if (typeof effect4 === "function") {
-          var cleanupFn = effect4({
+        var name = _ref.name, _ref$options = _ref.options, options2 = _ref$options === void 0 ? {} : _ref$options, effect5 = _ref.effect;
+        if (typeof effect5 === "function") {
+          var cleanupFn = effect5({
             state,
             name,
             instance,
@@ -45893,6 +45943,7 @@ if (typeof window !== "undefined") {
   window.Modal = Modal;
   window.initModals = initModals;
 }
+var modal_default = Modal;
 
 // node_modules/flowbite/lib/esm/components/drawer/index.js
 var __assign7 = function() {
@@ -50170,7 +50221,7 @@ var HomeComponent = class _HomeComponent {
   static \u0275fac = function HomeComponent_Factory(__ngFactoryType__) {
     return new (__ngFactoryType__ || _HomeComponent)();
   };
-  static \u0275cmp = /* @__PURE__ */ \u0275\u0275defineComponent({ type: _HomeComponent, selectors: [["app-home"]], decls: 13, vars: 0, consts: [["lang", "en"], ["charset", "UTF-8"], ["name", "viewport", "content", "width=device-width, initial-scale=1.0"], [1, "bg-gray-100", "font-sans", "flex", "flex-col", "min-h-screen"], [1, "flex"], [1, "w-48"], [1, "w-full", "overflow-hidden", "bg-white", "shadow-md", "border-gray-200"]], template: function HomeComponent_Template(rf, ctx) {
+  static \u0275cmp = /* @__PURE__ */ \u0275\u0275defineComponent({ type: _HomeComponent, selectors: [["app-home"]], decls: 13, vars: 0, consts: [["lang", "en"], ["charset", "UTF-8"], ["name", "viewport", "content", "width=device-width, initial-scale=1.0"], [1, "bg-gray-100", "font-sans", "flex", "flex-col", "min-h-screen"], [1, "flex"], [1, "w-50"], [1, "w-full", "overflow-hidden", "bg-white", "shadow-md", "border-gray-200"]], template: function HomeComponent_Template(rf, ctx) {
     if (rf & 1) {
       \u0275\u0275elementStart(0, "html", 0)(1, "head");
       \u0275\u0275element(2, "meta", 1)(3, "meta", 2);
@@ -50191,7 +50242,7 @@ var HomeComponent = class _HomeComponent {
 (() => {
   (typeof ngDevMode === "undefined" || ngDevMode) && setClassMetadata(HomeComponent, [{
     type: Component,
-    args: [{ selector: "app-home", imports: [RouterModule, LeftBarComponent, FooterComponent], template: '<!DOCTYPE html>\r\n<html lang="en">\r\n\r\n<head>\r\n  <meta charset="UTF-8">\r\n  <meta name="viewport" content="width=device-width, initial-scale=1.0">\r\n  <title>Med-It</title>\r\n  <script src="https://cdn.tailwindcss.com"><\/script>\r\n</head>\r\n\r\n<body class="bg-gray-100 font-sans flex flex-col min-h-screen">\r\n  <!-- Header -->\r\n  <!-- <app-header></app-header> -->\r\n  <!-- Main Content with Sidebar -->\r\n  <div class="flex">\r\n    <!-- Left Sidebar -->\r\n     <div class="w-48">\r\n       <app-left-bar></app-left-bar>\r\n     </div>\r\n    <!-- Main Content Area -->\r\n     <div class=" w-full overflow-hidden  bg-white shadow-md border-gray-200 ">\r\n       <!-- <app-appointments></app-appointments> -->\r\n       <router-outlet></router-outlet>\r\n     </div>\r\n\r\n  </div>\r\n  <!-- Footer -->\r\n  <app-footer></app-footer>\r\n</body>\r\n</html>\r\n' }]
+    args: [{ selector: "app-home", imports: [RouterModule, LeftBarComponent, FooterComponent], template: '<!DOCTYPE html>\r\n<html lang="en">\r\n\r\n<head>\r\n  <meta charset="UTF-8">\r\n  <meta name="viewport" content="width=device-width, initial-scale=1.0">\r\n  <title>Med-It</title>\r\n  <script src="https://cdn.tailwindcss.com"><\/script>\r\n</head>\r\n\r\n<body class="bg-gray-100 font-sans flex flex-col min-h-screen">\r\n  <!-- Header -->\r\n  <!-- <app-header></app-header> -->\r\n  <!-- Main Content with Sidebar -->\r\n  <div class="flex">\r\n    <!-- Left Sidebar -->\r\n     <div class="w-50">\r\n       <app-left-bar></app-left-bar>\r\n     </div>\r\n    <!-- Main Content Area -->\r\n     <div class=" w-full overflow-hidden  bg-white shadow-md border-gray-200 ">\r\n       <!-- <app-appointments></app-appointments> -->\r\n       <router-outlet></router-outlet>\r\n     </div>\r\n\r\n  </div>\r\n  <!-- Footer -->\r\n  <app-footer></app-footer>\r\n</body>\r\n</html>\r\n' }]
   }], null, null);
 })();
 (() => {
@@ -50451,6 +50502,2688 @@ var LoginComponent = class _LoginComponent {
   (typeof ngDevMode === "undefined" || ngDevMode) && \u0275setClassDebugInfo(LoginComponent, { className: "LoginComponent", filePath: "src/app/homepage/login/login.component.ts", lineNumber: 11 });
 })();
 
+// src/app/patient/medical-history/medical-history.component.ts
+var MedicalHistoryComponent = class _MedicalHistoryComponent {
+  static \u0275fac = function MedicalHistoryComponent_Factory(__ngFactoryType__) {
+    return new (__ngFactoryType__ || _MedicalHistoryComponent)();
+  };
+  static \u0275cmp = /* @__PURE__ */ \u0275\u0275defineComponent({ type: _MedicalHistoryComponent, selectors: [["app-medical-history"]], decls: 264, vars: 0, consts: [["lang", "en"], ["charset", "UTF-8"], ["name", "viewport", "content", "width=device-width, initial-scale=1.0"], ["rel", "stylesheet", "href", \u0275\u0275trustConstantResourceUrl`https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css`], [1, "bg-gray-100", "font-sans"], [1, "flex", "h-screen", "overflow-hidden"], [1, "hidden", "md:flex", "md:flex-shrink-0"], [1, "flex", "flex-col", "w-64", "bg-blue-800", "text-white"], [1, "flex", "flex-col", "flex-1", "overflow-hidden"], [1, "flex", "items-center", "justify-between", "px-6", "py-4", "bg-white", "border-b", "border-gray-200"], [1, "flex", "items-center"], [1, "md:hidden", "mr-4", "text-gray-500"], [1, "fas", "fa-bars"], [1, "text-xl", "font-semibold", "text-gray-800"], [1, "flex", "items-center", "space-x-4"], [1, "p-2", "text-gray-500", "rounded-full", "hover:bg-gray-100"], [1, "fas", "fa-print"], [1, "fas", "fa-download"], [1, "bg-white", "px-6", "py-4", "border-b", "border-gray-200"], ["src", "https://randomuser.me/api/portraits/men/32.jpg", "alt", "Patient", 1, "w-12", "h-12", "rounded-full", "mr-4"], [1, "text-lg", "font-semibold"], [1, "text-sm", "text-gray-600"], [1, "ml-auto", "flex", "space-x-3"], [1, "px-4", "py-2", "border", "border-gray-300", "rounded-lg", "text-sm", "font-medium", "hover:bg-gray-50"], [1, "fas", "fa-pencil-alt", "mr-2"], [1, "px-4", "py-2", "bg-blue-600", "text-white", "rounded-lg", "text-sm", "font-medium", "hover:bg-blue-700"], [1, "fas", "fa-plus", "mr-2"], [1, "flex-1", "overflow-y-auto", "p-6", "bg-gray-100"], [1, "max-w-6xl", "mx-auto"], [1, "bg-white", "rounded-lg", "shadow", "mb-6"], [1, "border-b", "border-gray-200"], [1, "flex", "-mb-px"], ["href", "#", 1, "whitespace-nowrap", "py-4", "px-6", "border-b-2", "border-blue-500", "font-medium", "text-sm", "text-blue-600"], [1, "fas", "fa-file-medical", "mr-2"], ["href", "#", 1, "whitespace-nowrap", "py-4", "px-6", "border-b-2", "border-transparent", "font-medium", "text-sm", "text-gray-500", "hover:text-gray-700", "hover:border-gray-300"], [1, "fas", "fa-allergies", "mr-2"], [1, "fas", "fa-prescription-bottle-alt", "mr-2"], [1, "fas", "fa-procedures", "mr-2"], [1, "fas", "fa-file-invoice", "mr-2"], [1, "p-6"], [1, "mb-8"], [1, "text-lg", "font-medium", "text-gray-900", "mb-4", "flex", "items-center"], [1, "fas", "fa-heartbeat", "text-blue-500", "mr-2"], [1, "bg-gray-50", "p-4", "rounded-lg"], [1, "grid", "grid-cols-1", "md:grid-cols-3", "gap-6"], [1, "text-sm", "font-medium", "text-gray-700", "mb-2"], [1, "space-y-1"], [1, "flex", "items-start"], [1, "fas", "fa-check-circle", "text-green-500", "mt-1", "mr-2"], [1, "fas", "fa-allergies", "text-red-500", "mr-2"], [1, "bg-red-50", "border-l-4", "border-red-500", "p-4", "rounded-r-lg"], [1, "flex"], [1, "flex-shrink-0"], [1, "fas", "fa-exclamation-triangle", "text-red-500"], [1, "ml-3"], [1, "text-sm", "font-medium", "text-red-800"], [1, "mt-2", "text-sm", "text-red-700"], [1, "list-disc", "pl-5", "space-y-1"], [1, "mt-4", "flex"], [1, "fas", "fa-prescription-bottle-alt", "text-blue-500", "mr-2"], [1, "overflow-x-auto"], [1, "min-w-full", "divide-y", "divide-gray-200"], [1, "bg-gray-50"], ["scope", "col", 1, "px-6", "py-3", "text-left", "text-xs", "font-medium", "text-gray-500", "uppercase", "tracking-wider"], [1, "bg-white", "divide-y", "divide-gray-200"], [1, "px-6", "py-4", "whitespace-nowrap", "text-sm", "font-medium", "text-gray-900"], [1, "px-6", "py-4", "whitespace-nowrap", "text-sm", "text-gray-500"], [1, "fas", "fa-history", "text-blue-500", "mr-2"], [1, "flow-root"], [1, "-mb-8"], [1, "relative", "pb-8"], ["aria-hidden", "true", 1, "absolute", "top-4", "left-4", "-ml-px", "h-full", "w-0.5", "bg-gray-200"], [1, "relative", "flex", "space-x-3"], [1, "h-8", "w-8", "rounded-full", "bg-blue-500", "flex", "items-center", "justify-center", "ring-8", "ring-white"], [1, "fas", "fa-user-md", "text-white", "text-sm"], [1, "min-w-0", "flex-1", "pt-1.5", "flex", "justify-between", "space-x-4"], [1, "text-sm", "text-gray-800"], [1, "font-medium"], [1, "text-right", "text-sm", "whitespace-nowrap", "text-gray-500"], ["datetime", "2023-06-15"], [1, "h-8", "w-8", "rounded-full", "bg-green-500", "flex", "items-center", "justify-center", "ring-8", "ring-white"], [1, "fas", "fa-vial", "text-white", "text-sm"], ["datetime", "2023-05-20"], [1, "h-8", "w-8", "rounded-full", "bg-purple-500", "flex", "items-center", "justify-center", "ring-8", "ring-white"], [1, "fas", "fa-procedures", "text-white", "text-sm"], ["datetime", "2019-08-12"], [1, "fas", "fa-family", "text-blue-500", "mr-2"], [1, "grid", "grid-cols-1", "md:grid-cols-2", "gap-6"]], template: function MedicalHistoryComponent_Template(rf, ctx) {
+    if (rf & 1) {
+      \u0275\u0275elementStart(0, "html", 0)(1, "head");
+      \u0275\u0275element(2, "meta", 1)(3, "meta", 2);
+      \u0275\u0275elementStart(4, "title");
+      \u0275\u0275text(5, "MediCare - Medical History");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(6, "link", 3);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(7, "body", 4)(8, "div", 5)(9, "div", 6);
+      \u0275\u0275element(10, "div", 7);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(11, "div", 8)(12, "header", 9)(13, "div", 10)(14, "button", 11);
+      \u0275\u0275element(15, "i", 12);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(16, "h1", 13);
+      \u0275\u0275text(17, "Medical History");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(18, "div", 14)(19, "button", 15);
+      \u0275\u0275element(20, "i", 16);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(21, "button", 15);
+      \u0275\u0275element(22, "i", 17);
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(23, "div", 18)(24, "div", 10);
+      \u0275\u0275element(25, "img", 19);
+      \u0275\u0275elementStart(26, "div")(27, "h2", 20);
+      \u0275\u0275text(28, "John Smith");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(29, "p", 21);
+      \u0275\u0275text(30, "ID: #PAT-1001 | Male | 42 years | DOB: 06/12/1981");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(31, "div", 22)(32, "button", 23);
+      \u0275\u0275element(33, "i", 24);
+      \u0275\u0275text(34, " Edit History ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(35, "button", 25);
+      \u0275\u0275element(36, "i", 26);
+      \u0275\u0275text(37, " Add Entry ");
+      \u0275\u0275elementEnd()()()();
+      \u0275\u0275elementStart(38, "main", 27)(39, "div", 28)(40, "div", 29)(41, "div", 30)(42, "nav", 31)(43, "a", 32);
+      \u0275\u0275element(44, "i", 33);
+      \u0275\u0275text(45, " Summary ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(46, "a", 34);
+      \u0275\u0275element(47, "i", 35);
+      \u0275\u0275text(48, " Allergies ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(49, "a", 34);
+      \u0275\u0275element(50, "i", 36);
+      \u0275\u0275text(51, " Medications ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(52, "a", 34);
+      \u0275\u0275element(53, "i", 37);
+      \u0275\u0275text(54, " Procedures ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(55, "a", 34);
+      \u0275\u0275element(56, "i", 38);
+      \u0275\u0275text(57, " Documents ");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(58, "div", 39)(59, "div", 40)(60, "h3", 41);
+      \u0275\u0275element(61, "i", 42);
+      \u0275\u0275text(62, " Current Health Status ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(63, "div", 43)(64, "div", 44)(65, "div")(66, "h4", 45);
+      \u0275\u0275text(67, "Chronic Conditions");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(68, "ul", 46)(69, "li", 47);
+      \u0275\u0275element(70, "i", 48);
+      \u0275\u0275elementStart(71, "span");
+      \u0275\u0275text(72, "Hypertension (Diagnosed 2018)");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(73, "li", 47);
+      \u0275\u0275element(74, "i", 48);
+      \u0275\u0275elementStart(75, "span");
+      \u0275\u0275text(76, "Type 2 Diabetes (Diagnosed 2020)");
+      \u0275\u0275elementEnd()()()();
+      \u0275\u0275elementStart(77, "div")(78, "h4", 45);
+      \u0275\u0275text(79, "Vital Signs (Last Recorded)");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(80, "ul", 46)(81, "li");
+      \u0275\u0275text(82, "BP: 130/80 mmHg (06/15/2023)");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(83, "li");
+      \u0275\u0275text(84, "HR: 78 bpm (06/15/2023)");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(85, "li");
+      \u0275\u0275text(86, "Weight: 185 lbs (06/15/2023)");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(87, "div")(88, "h4", 45);
+      \u0275\u0275text(89, "Recent Lab Results");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(90, "ul", 46)(91, "li");
+      \u0275\u0275text(92, "A1C: 6.2% (05/20/2023)");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(93, "li");
+      \u0275\u0275text(94, "Cholesterol: 190 mg/dL (05/20/2023)");
+      \u0275\u0275elementEnd()()()()()();
+      \u0275\u0275elementStart(95, "div", 40)(96, "h3", 41);
+      \u0275\u0275element(97, "i", 49);
+      \u0275\u0275text(98, " Allergies & Adverse Reactions ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(99, "div", 50)(100, "div", 51)(101, "div", 52);
+      \u0275\u0275element(102, "i", 53);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(103, "div", 54)(104, "h4", 55);
+      \u0275\u0275text(105, "Drug Allergies");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(106, "div", 56)(107, "ul", 57)(108, "li");
+      \u0275\u0275text(109, "Penicillin - Severe reaction (Hives, difficulty breathing)");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(110, "li");
+      \u0275\u0275text(111, "Sulfa drugs - Mild rash");
+      \u0275\u0275elementEnd()()()()();
+      \u0275\u0275elementStart(112, "div", 58)(113, "div", 52);
+      \u0275\u0275element(114, "i", 53);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(115, "div", 54)(116, "h4", 55);
+      \u0275\u0275text(117, "Other Allergies");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(118, "div", 56)(119, "ul", 57)(120, "li");
+      \u0275\u0275text(121, "Peanuts - Anaphylaxis");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(122, "li");
+      \u0275\u0275text(123, "Shellfish - Mild reaction");
+      \u0275\u0275elementEnd()()()()()()();
+      \u0275\u0275elementStart(124, "div", 40)(125, "h3", 41);
+      \u0275\u0275element(126, "i", 59);
+      \u0275\u0275text(127, " Current Medications ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(128, "div", 60)(129, "table", 61)(130, "thead", 62)(131, "tr")(132, "th", 63);
+      \u0275\u0275text(133, " Medication");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(134, "th", 63);
+      \u0275\u0275text(135, "Dosage ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(136, "th", 63);
+      \u0275\u0275text(137, " Frequency");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(138, "th", 63);
+      \u0275\u0275text(139, " Prescribed");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(140, "th", 63);
+      \u0275\u0275text(141, " Prescriber");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(142, "tbody", 64)(143, "tr")(144, "td", 65);
+      \u0275\u0275text(145, "Lisinopril");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(146, "td", 66);
+      \u0275\u0275text(147, "10 mg");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(148, "td", 66);
+      \u0275\u0275text(149, "Once daily");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(150, "td", 66);
+      \u0275\u0275text(151, "03/15/2021");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(152, "td", 66);
+      \u0275\u0275text(153, "Dr. Sarah Johnson");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(154, "tr")(155, "td", 65);
+      \u0275\u0275text(156, "Metformin");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(157, "td", 66);
+      \u0275\u0275text(158, "500 mg");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(159, "td", 66);
+      \u0275\u0275text(160, "Twice daily");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(161, "td", 66);
+      \u0275\u0275text(162, "05/20/2020");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(163, "td", 66);
+      \u0275\u0275text(164, "Dr. Sarah Johnson");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(165, "tr")(166, "td", 65);
+      \u0275\u0275text(167, "Atorvastatin");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(168, "td", 66);
+      \u0275\u0275text(169, "20 mg");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(170, "td", 66);
+      \u0275\u0275text(171, "Once daily");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(172, "td", 66);
+      \u0275\u0275text(173, "06/15/2023");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(174, "td", 66);
+      \u0275\u0275text(175, "Dr. Sarah Johnson");
+      \u0275\u0275elementEnd()()()()()();
+      \u0275\u0275elementStart(176, "div", 40)(177, "h3", 41);
+      \u0275\u0275element(178, "i", 67);
+      \u0275\u0275text(179, " Medical History Timeline ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(180, "div", 68)(181, "ul", 69)(182, "li")(183, "div", 70);
+      \u0275\u0275element(184, "span", 71);
+      \u0275\u0275elementStart(185, "div", 72)(186, "div")(187, "span", 73);
+      \u0275\u0275element(188, "i", 74);
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(189, "div", 75)(190, "div")(191, "p", 76)(192, "span", 77);
+      \u0275\u0275text(193, "Annual Physical");
+      \u0275\u0275elementEnd();
+      \u0275\u0275text(194, " - All vitals normal, recommended dietary changes ");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(195, "div", 78)(196, "time", 79);
+      \u0275\u0275text(197, "Jun 15, 2023");
+      \u0275\u0275elementEnd()()()()()();
+      \u0275\u0275elementStart(198, "li")(199, "div", 70);
+      \u0275\u0275element(200, "span", 71);
+      \u0275\u0275elementStart(201, "div", 72)(202, "div")(203, "span", 80);
+      \u0275\u0275element(204, "i", 81);
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(205, "div", 75)(206, "div")(207, "p", 76)(208, "span", 77);
+      \u0275\u0275text(209, "Lab Tests");
+      \u0275\u0275elementEnd();
+      \u0275\u0275text(210, " - Cholesterol panel and A1C performed ");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(211, "div", 78)(212, "time", 82);
+      \u0275\u0275text(213, "May 20, 2023");
+      \u0275\u0275elementEnd()()()()()();
+      \u0275\u0275elementStart(214, "li")(215, "div", 70);
+      \u0275\u0275element(216, "span", 71);
+      \u0275\u0275elementStart(217, "div", 72)(218, "div")(219, "span", 83);
+      \u0275\u0275element(220, "i", 84);
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(221, "div", 75)(222, "div")(223, "p", 76)(224, "span", 77);
+      \u0275\u0275text(225, "Appendectomy");
+      \u0275\u0275elementEnd();
+      \u0275\u0275text(226, " - Emergency surgery performed at City General ");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(227, "div", 78)(228, "time", 85);
+      \u0275\u0275text(229, "Aug 12, 2019");
+      \u0275\u0275elementEnd()()()()()()()()();
+      \u0275\u0275elementStart(230, "div")(231, "h3", 41);
+      \u0275\u0275element(232, "i", 86);
+      \u0275\u0275text(233, " Family Medical History ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(234, "div", 43)(235, "div", 87)(236, "div")(237, "h4", 45);
+      \u0275\u0275text(238, "Father");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(239, "ul", 57)(240, "li");
+      \u0275\u0275text(241, "Heart disease (Age 65)");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(242, "li");
+      \u0275\u0275text(243, "Type 2 Diabetes");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(244, "li");
+      \u0275\u0275text(245, "Deceased at 72");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(246, "div")(247, "h4", 45);
+      \u0275\u0275text(248, "Mother");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(249, "ul", 57)(250, "li");
+      \u0275\u0275text(251, "Breast cancer (Age 58)");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(252, "li");
+      \u0275\u0275text(253, "Hypertension");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(254, "li");
+      \u0275\u0275text(255, "Alive, 78 years");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(256, "div")(257, "h4", 45);
+      \u0275\u0275text(258, "Siblings");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(259, "ul", 57)(260, "li");
+      \u0275\u0275text(261, "Brother (45) - Hypertension");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(262, "li");
+      \u0275\u0275text(263, "Sister (39) - No significant conditions");
+      \u0275\u0275elementEnd()()()()()()()()()()()()()();
+    }
+  }, encapsulation: 2 });
+};
+(() => {
+  (typeof ngDevMode === "undefined" || ngDevMode) && setClassMetadata(MedicalHistoryComponent, [{
+    type: Component,
+    args: [{ selector: "app-medical-history", imports: [], template: '<!DOCTYPE html>\r\n<html lang="en">\r\n\r\n<head>\r\n  <meta charset="UTF-8">\r\n  <meta name="viewport" content="width=device-width, initial-scale=1.0">\r\n  <title>MediCare - Medical History</title>\r\n  <script src="https://cdn.tailwindcss.com"><\/script>\r\n  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">\r\n</head>\r\n\r\n<body class="bg-gray-100 font-sans">\r\n  <div class="flex h-screen overflow-hidden">\r\n    <!-- Sidebar -->\r\n    <div class="hidden md:flex md:flex-shrink-0">\r\n      <div class="flex flex-col w-64 bg-blue-800 text-white">\r\n        <!-- Sidebar content from previous pages -->\r\n      </div>\r\n    </div>\r\n\r\n    <!-- Main Content -->\r\n    <div class="flex flex-col flex-1 overflow-hidden">\r\n      <!-- Top Navigation -->\r\n      <header class="flex items-center justify-between px-6 py-4 bg-white border-b border-gray-200">\r\n        <div class="flex items-center">\r\n          <button class="md:hidden mr-4 text-gray-500">\r\n            <i class="fas fa-bars"></i>\r\n          </button>\r\n          <h1 class="text-xl font-semibold text-gray-800">Medical History</h1>\r\n        </div>\r\n        <div class="flex items-center space-x-4">\r\n          <button class="p-2 text-gray-500 rounded-full hover:bg-gray-100">\r\n            <i class="fas fa-print"></i>\r\n          </button>\r\n          <button class="p-2 text-gray-500 rounded-full hover:bg-gray-100">\r\n            <i class="fas fa-download"></i>\r\n          </button>\r\n        </div>\r\n      </header>\r\n\r\n      <!-- Patient Header -->\r\n      <div class="bg-white px-6 py-4 border-b border-gray-200">\r\n        <div class="flex items-center">\r\n          <img class="w-12 h-12 rounded-full mr-4" src="https://randomuser.me/api/portraits/men/32.jpg" alt="Patient">\r\n          <div>\r\n            <h2 class="text-lg font-semibold">John Smith</h2>\r\n            <p class="text-sm text-gray-600">ID: #PAT-1001 | Male | 42 years | DOB: 06/12/1981</p>\r\n          </div>\r\n          <div class="ml-auto flex space-x-3">\r\n            <button class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50">\r\n              <i class="fas fa-pencil-alt mr-2"></i> Edit History\r\n            </button>\r\n            <button class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">\r\n              <i class="fas fa-plus mr-2"></i> Add Entry\r\n            </button>\r\n          </div>\r\n        </div>\r\n      </div>\r\n\r\n      <!-- Main Content Area -->\r\n      <main class="flex-1 overflow-y-auto p-6 bg-gray-100">\r\n        <div class="max-w-6xl mx-auto">\r\n          <!-- Medical History Tabs -->\r\n          <div class="bg-white rounded-lg shadow mb-6">\r\n            <div class="border-b border-gray-200">\r\n              <nav class="flex -mb-px">\r\n                <a href="#"\r\n                  class="whitespace-nowrap py-4 px-6 border-b-2 border-blue-500 font-medium text-sm text-blue-600">\r\n                  <i class="fas fa-file-medical mr-2"></i> Summary\r\n                </a>\r\n                <a href="#"\r\n                  class="whitespace-nowrap py-4 px-6 border-b-2 border-transparent font-medium text-sm text-gray-500 hover:text-gray-700 hover:border-gray-300">\r\n                  <i class="fas fa-allergies mr-2"></i> Allergies\r\n                </a>\r\n                <a href="#"\r\n                  class="whitespace-nowrap py-4 px-6 border-b-2 border-transparent font-medium text-sm text-gray-500 hover:text-gray-700 hover:border-gray-300">\r\n                  <i class="fas fa-prescription-bottle-alt mr-2"></i> Medications\r\n                </a>\r\n                <a href="#"\r\n                  class="whitespace-nowrap py-4 px-6 border-b-2 border-transparent font-medium text-sm text-gray-500 hover:text-gray-700 hover:border-gray-300">\r\n                  <i class="fas fa-procedures mr-2"></i> Procedures\r\n                </a>\r\n                <a href="#"\r\n                  class="whitespace-nowrap py-4 px-6 border-b-2 border-transparent font-medium text-sm text-gray-500 hover:text-gray-700 hover:border-gray-300">\r\n                  <i class="fas fa-file-invoice mr-2"></i> Documents\r\n                </a>\r\n              </nav>\r\n            </div>\r\n\r\n            <!-- Summary Content -->\r\n            <div class="p-6">\r\n              <!-- Current Health Status -->\r\n              <div class="mb-8">\r\n                <h3 class="text-lg font-medium text-gray-900 mb-4 flex items-center">\r\n                  <i class="fas fa-heartbeat text-blue-500 mr-2"></i> Current Health Status\r\n                </h3>\r\n                <div class="bg-gray-50 p-4 rounded-lg">\r\n                  <div class="grid grid-cols-1 md:grid-cols-3 gap-6">\r\n                    <div>\r\n                      <h4 class="text-sm font-medium text-gray-700 mb-2">Chronic Conditions</h4>\r\n                      <ul class="space-y-1">\r\n                        <li class="flex items-start">\r\n                          <i class="fas fa-check-circle text-green-500 mt-1 mr-2"></i>\r\n                          <span>Hypertension (Diagnosed 2018)</span>\r\n                        </li>\r\n                        <li class="flex items-start">\r\n                          <i class="fas fa-check-circle text-green-500 mt-1 mr-2"></i>\r\n                          <span>Type 2 Diabetes (Diagnosed 2020)</span>\r\n                        </li>\r\n                      </ul>\r\n                    </div>\r\n                    <div>\r\n                      <h4 class="text-sm font-medium text-gray-700 mb-2">Vital Signs (Last Recorded)</h4>\r\n                      <ul class="space-y-1">\r\n                        <li>BP: 130/80 mmHg (06/15/2023)</li>\r\n                        <li>HR: 78 bpm (06/15/2023)</li>\r\n                        <li>Weight: 185 lbs (06/15/2023)</li>\r\n                      </ul>\r\n                    </div>\r\n                    <div>\r\n                      <h4 class="text-sm font-medium text-gray-700 mb-2">Recent Lab Results</h4>\r\n                      <ul class="space-y-1">\r\n                        <li>A1C: 6.2% (05/20/2023)</li>\r\n                        <li>Cholesterol: 190 mg/dL (05/20/2023)</li>\r\n                      </ul>\r\n                    </div>\r\n                  </div>\r\n                </div>\r\n              </div>\r\n\r\n              <!-- Allergies -->\r\n              <div class="mb-8">\r\n                <h3 class="text-lg font-medium text-gray-900 mb-4 flex items-center">\r\n                  <i class="fas fa-allergies text-red-500 mr-2"></i> Allergies & Adverse Reactions\r\n                </h3>\r\n                <div class="bg-red-50 border-l-4 border-red-500 p-4 rounded-r-lg">\r\n                  <div class="flex">\r\n                    <div class="flex-shrink-0">\r\n                      <i class="fas fa-exclamation-triangle text-red-500"></i>\r\n                    </div>\r\n                    <div class="ml-3">\r\n                      <h4 class="text-sm font-medium text-red-800">Drug Allergies</h4>\r\n                      <div class="mt-2 text-sm text-red-700">\r\n                        <ul class="list-disc pl-5 space-y-1">\r\n                          <li>Penicillin - Severe reaction (Hives, difficulty breathing)</li>\r\n                          <li>Sulfa drugs - Mild rash</li>\r\n                        </ul>\r\n                      </div>\r\n                    </div>\r\n                  </div>\r\n                  <div class="mt-4 flex">\r\n                    <div class="flex-shrink-0">\r\n                      <i class="fas fa-exclamation-triangle text-red-500"></i>\r\n                    </div>\r\n                    <div class="ml-3">\r\n                      <h4 class="text-sm font-medium text-red-800">Other Allergies</h4>\r\n                      <div class="mt-2 text-sm text-red-700">\r\n                        <ul class="list-disc pl-5 space-y-1">\r\n                          <li>Peanuts - Anaphylaxis</li>\r\n                          <li>Shellfish - Mild reaction</li>\r\n                        </ul>\r\n                      </div>\r\n                    </div>\r\n                  </div>\r\n                </div>\r\n              </div>\r\n\r\n              <!-- Current Medications -->\r\n              <div class="mb-8">\r\n                <h3 class="text-lg font-medium text-gray-900 mb-4 flex items-center">\r\n                  <i class="fas fa-prescription-bottle-alt text-blue-500 mr-2"></i> Current Medications\r\n                </h3>\r\n                <div class="overflow-x-auto">\r\n                  <table class="min-w-full divide-y divide-gray-200">\r\n                    <thead class="bg-gray-50">\r\n                      <tr>\r\n                        <th scope="col"\r\n                          class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">\r\n                          Medication</th>\r\n                        <th scope="col"\r\n                          class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Dosage\r\n                        </th>\r\n                        <th scope="col"\r\n                          class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">\r\n                          Frequency</th>\r\n                        <th scope="col"\r\n                          class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">\r\n                          Prescribed</th>\r\n                        <th scope="col"\r\n                          class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">\r\n                          Prescriber</th>\r\n                      </tr>\r\n                    </thead>\r\n                    <tbody class="bg-white divide-y divide-gray-200">\r\n                      <tr>\r\n                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">Lisinopril</td>\r\n                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">10 mg</td>\r\n                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Once daily</td>\r\n                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">03/15/2021</td>\r\n                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Dr. Sarah Johnson</td>\r\n                      </tr>\r\n                      <tr>\r\n                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">Metformin</td>\r\n                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">500 mg</td>\r\n                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Twice daily</td>\r\n                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">05/20/2020</td>\r\n                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Dr. Sarah Johnson</td>\r\n                      </tr>\r\n                      <tr>\r\n                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">Atorvastatin</td>\r\n                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">20 mg</td>\r\n                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Once daily</td>\r\n                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">06/15/2023</td>\r\n                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Dr. Sarah Johnson</td>\r\n                      </tr>\r\n                    </tbody>\r\n                  </table>\r\n                </div>\r\n              </div>\r\n\r\n              <!-- Medical History Timeline -->\r\n              <div class="mb-8">\r\n                <h3 class="text-lg font-medium text-gray-900 mb-4 flex items-center">\r\n                  <i class="fas fa-history text-blue-500 mr-2"></i> Medical History Timeline\r\n                </h3>\r\n                <div class="flow-root">\r\n                  <ul class="-mb-8">\r\n                    <li>\r\n                      <div class="relative pb-8">\r\n                        <span class="absolute top-4 left-4 -ml-px h-full w-0.5 bg-gray-200" aria-hidden="true"></span>\r\n                        <div class="relative flex space-x-3">\r\n                          <div>\r\n                            <span\r\n                              class="h-8 w-8 rounded-full bg-blue-500 flex items-center justify-center ring-8 ring-white">\r\n                              <i class="fas fa-user-md text-white text-sm"></i>\r\n                            </span>\r\n                          </div>\r\n                          <div class="min-w-0 flex-1 pt-1.5 flex justify-between space-x-4">\r\n                            <div>\r\n                              <p class="text-sm text-gray-800">\r\n                                <span class="font-medium">Annual Physical</span> - All vitals normal, recommended\r\n                                dietary changes\r\n                              </p>\r\n                            </div>\r\n                            <div class="text-right text-sm whitespace-nowrap text-gray-500">\r\n                              <time datetime="2023-06-15">Jun 15, 2023</time>\r\n                            </div>\r\n                          </div>\r\n                        </div>\r\n                      </div>\r\n                    </li>\r\n                    <li>\r\n                      <div class="relative pb-8">\r\n                        <span class="absolute top-4 left-4 -ml-px h-full w-0.5 bg-gray-200" aria-hidden="true"></span>\r\n                        <div class="relative flex space-x-3">\r\n                          <div>\r\n                            <span\r\n                              class="h-8 w-8 rounded-full bg-green-500 flex items-center justify-center ring-8 ring-white">\r\n                              <i class="fas fa-vial text-white text-sm"></i>\r\n                            </span>\r\n                          </div>\r\n                          <div class="min-w-0 flex-1 pt-1.5 flex justify-between space-x-4">\r\n                            <div>\r\n                              <p class="text-sm text-gray-800">\r\n                                <span class="font-medium">Lab Tests</span> - Cholesterol panel and A1C performed\r\n                              </p>\r\n                            </div>\r\n                            <div class="text-right text-sm whitespace-nowrap text-gray-500">\r\n                              <time datetime="2023-05-20">May 20, 2023</time>\r\n                            </div>\r\n                          </div>\r\n                        </div>\r\n                      </div>\r\n                    </li>\r\n                    <li>\r\n                      <div class="relative pb-8">\r\n                        <span class="absolute top-4 left-4 -ml-px h-full w-0.5 bg-gray-200" aria-hidden="true"></span>\r\n                        <div class="relative flex space-x-3">\r\n                          <div>\r\n                            <span\r\n                              class="h-8 w-8 rounded-full bg-purple-500 flex items-center justify-center ring-8 ring-white">\r\n                              <i class="fas fa-procedures text-white text-sm"></i>\r\n                            </span>\r\n                          </div>\r\n                          <div class="min-w-0 flex-1 pt-1.5 flex justify-between space-x-4">\r\n                            <div>\r\n                              <p class="text-sm text-gray-800">\r\n                                <span class="font-medium">Appendectomy</span> - Emergency surgery performed at City\r\n                                General\r\n                              </p>\r\n                            </div>\r\n                            <div class="text-right text-sm whitespace-nowrap text-gray-500">\r\n                              <time datetime="2019-08-12">Aug 12, 2019</time>\r\n                            </div>\r\n                          </div>\r\n                        </div>\r\n                      </div>\r\n                    </li>\r\n                  </ul>\r\n                </div>\r\n              </div>\r\n\r\n              <!-- Family History -->\r\n              <div>\r\n                <h3 class="text-lg font-medium text-gray-900 mb-4 flex items-center">\r\n                  <i class="fas fa-family text-blue-500 mr-2"></i> Family Medical History\r\n                </h3>\r\n                <div class="bg-gray-50 p-4 rounded-lg">\r\n                  <div class="grid grid-cols-1 md:grid-cols-2 gap-6">\r\n                    <div>\r\n                      <h4 class="text-sm font-medium text-gray-700 mb-2">Father</h4>\r\n                      <ul class="list-disc pl-5 space-y-1">\r\n                        <li>Heart disease (Age 65)</li>\r\n                        <li>Type 2 Diabetes</li>\r\n                        <li>Deceased at 72</li>\r\n                      </ul>\r\n                    </div>\r\n                    <div>\r\n                      <h4 class="text-sm font-medium text-gray-700 mb-2">Mother</h4>\r\n                      <ul class="list-disc pl-5 space-y-1">\r\n                        <li>Breast cancer (Age 58)</li>\r\n                        <li>Hypertension</li>\r\n                        <li>Alive, 78 years</li>\r\n                      </ul>\r\n                    </div>\r\n                    <div>\r\n                      <h4 class="text-sm font-medium text-gray-700 mb-2">Siblings</h4>\r\n                      <ul class="list-disc pl-5 space-y-1">\r\n                        <li>Brother (45) - Hypertension</li>\r\n                        <li>Sister (39) - No significant conditions</li>\r\n                      </ul>\r\n                    </div>\r\n                  </div>\r\n                </div>\r\n              </div>\r\n            </div>\r\n          </div>\r\n        </div>\r\n      </main>\r\n    </div>\r\n  </div>\r\n</body>\r\n\r\n</html>' }]
+  }], null, null);
+})();
+(() => {
+  (typeof ngDevMode === "undefined" || ngDevMode) && \u0275setClassDebugInfo(MedicalHistoryComponent, { className: "MedicalHistoryComponent", filePath: "src/app/patient/medical-history/medical-history.component.ts", lineNumber: 9 });
+})();
+
+// src/app/app.types.ts
+var DialogNameEnum;
+(function(DialogNameEnum2) {
+  DialogNameEnum2["newAllergy"] = "newAllergy";
+  DialogNameEnum2["NewPatient"] = "newPatient";
+  DialogNameEnum2["newCurrentMedication"] = "newCurrentMedication";
+  DialogNameEnum2["newVitalStatistic"] = "newVitalStatistic";
+  DialogNameEnum2["newMedicalCondition"] = "newMedicalCondition";
+  DialogNameEnum2["newImmunization"] = "newImmunization";
+  DialogNameEnum2["newFamilyHistory"] = "newFamilyHistory";
+  DialogNameEnum2["none"] = "none";
+})(DialogNameEnum || (DialogNameEnum = {}));
+
+// src/app/service/share-data.service.ts
+var ShareDataService = class _ShareDataService {
+  dialogName = signal(DialogNameEnum.none);
+  constructor() {
+  }
+  setDilaogName(name) {
+    this.dialogName.set(name);
+  }
+  getDialogName() {
+    return this.dialogName();
+  }
+  static \u0275fac = function ShareDataService_Factory(__ngFactoryType__) {
+    return new (__ngFactoryType__ || _ShareDataService)();
+  };
+  static \u0275prov = /* @__PURE__ */ \u0275\u0275defineInjectable({ token: _ShareDataService, factory: _ShareDataService.\u0275fac, providedIn: "root" });
+};
+(() => {
+  (typeof ngDevMode === "undefined" || ngDevMode) && setClassMetadata(ShareDataService, [{
+    type: Injectable,
+    args: [{
+      providedIn: "root"
+    }]
+  }], () => [], null);
+})();
+
+// src/app/patient/new-allergies/new-allergies.component.ts
+var _c02 = ["newAllergy"];
+var NewAllergiesComponent = class _NewAllergiesComponent {
+  shareDataService;
+  $NewAllergy;
+  modalElement;
+  constructor(shareDataService) {
+    this.shareDataService = shareDataService;
+    effect(() => {
+      this.showDialog();
+    });
+  }
+  ngAfterViewInit() {
+    const modalOptions = {
+      placement: "top-center",
+      backdrop: "dynamic",
+      backdropClasses: "bg-gray-900/50 dark:bg-gray-900/80 fixed inset-0 z-40",
+      closable: true,
+      onHide: () => {
+        this.shareDataService.setDilaogName(DialogNameEnum.none);
+      },
+      onShow: () => {
+        console.log("modal is shown");
+      },
+      onToggle: () => {
+        console.log("modal has been toggled");
+      }
+    };
+    const instanceOptions = {
+      id: "modalEl",
+      override: true
+    };
+    this.modalElement = new modal_default(this.$NewAllergy.nativeElement, modalOptions, instanceOptions);
+  }
+  showDialog() {
+    if (this.shareDataService.getDialogName() === DialogNameEnum.newAllergy) {
+      this.modalElement.show();
+    }
+  }
+  closeModal() {
+    this.modalElement.hide();
+  }
+  static \u0275fac = function NewAllergiesComponent_Factory(__ngFactoryType__) {
+    return new (__ngFactoryType__ || _NewAllergiesComponent)(\u0275\u0275directiveInject(ShareDataService));
+  };
+  static \u0275cmp = /* @__PURE__ */ \u0275\u0275defineComponent({ type: _NewAllergiesComponent, selectors: [["app-new-allergies"]], viewQuery: function NewAllergiesComponent_Query(rf, ctx) {
+    if (rf & 1) {
+      \u0275\u0275viewQuery(_c02, 5);
+    }
+    if (rf & 2) {
+      let _t;
+      \u0275\u0275queryRefresh(_t = \u0275\u0275loadQuery()) && (ctx.$NewAllergy = _t.first);
+    }
+  }, decls: 87, vars: 0, consts: [["newAllergy", ""], ["id", "modalEl", "tabindex", "-1", "aria-hidden", "true", 1, "fixed", "left-0", "right-0", "top-0", "z-50", "hidden", "h-[calc(100%-1rem)]", "max-h-full", "w-full", "overflow-y-auto", "overflow-x-hidden", "p-4", "md:inset-0"], [1, "relative", "max-h-full", "w-full", "max-w-2xl"], [1, "relative", "rounded-lg", "bg-white", "shadow-sm", "dark:bg-gray-700"], [1, "flex", "space-x-4", "items-center", "text-white", "bg-blue-600", "justify-between", "rounded-t", "border-b", "p-2.5", "dark:border-gray-600"], [1, "fas", "fa-xl", "fa-allergies"], [1, "text-xl", "font-semibold", "lg:text-2xl"], ["type", "button", 1, "ms-auto", "inline-flex", "h-8", "w-8", "items-center", "justify-center", "rounded-lg", "bg-transparent", "text-sm", "text-gray-400", "hover:bg-gray-200", "hover:text-gray-900", "dark:hover:bg-gray-600", "dark:hover:text-white", 3, "click"], ["aria-hidden", "true", "xmlns", "http://www.w3.org/2000/svg", "fill", "none", "viewBox", "0 0 14 14", 1, "h-3", "w-3"], ["stroke", "currentColor", "stroke-linecap", "round", "stroke-linejoin", "round", "stroke-width", "2", "d", "m1 1 6 6m0 0 6 6M7 7l6-6M7 7l-6 6"], [1, "sr-only"], [1, "space-y-6", "p-5"], [1, "mb-4"], ["for", "allergyName", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], [1, "relative"], ["type", "text", "id", "allergyName", "placeholder", "e.g. Penicillin, Peanuts", "required", "", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "absolute", "inset-y-0", "right-0", "flex", "items-center", "pr-3", "pointer-events-none"], [1, "fas", "fa-pills", "text-gray-400"], ["for", "reactionType", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["id", "reactionType", "required", "", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], ["value", ""], ["value", "anaphylaxis"], ["value", "rash"], ["value", "swelling"], ["value", "respiratory"], ["value", "gi"], ["value", "other"], [1, "block", "text-sm", "font-medium", "text-gray-700", "mb-2"], [1, "grid", "grid-cols-3", "gap-3"], [1, "inline-flex", "items-center"], ["type", "radio", "name", "severity", "value", "mild", 1, "h-4", "w-4", "text-blue-600", "focus:ring-blue-500"], [1, "ml-2", "text-sm", "text-gray-700"], ["type", "radio", "name", "severity", "value", "moderate", "checked", "", 1, "h-4", "w-4", "text-yellow-500", "focus:ring-yellow-500"], ["type", "radio", "name", "severity", "value", "severe", 1, "h-4", "w-4", "text-red-600", "focus:ring-red-500"], ["for", "onsetDate", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "date", "id", "onsetDate", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "fas", "fa-calendar-alt", "text-gray-400"], [1, "mb-6"], ["for", "notes", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["id", "notes", "rows", "3", "placeholder", "Describe the reaction in detail, treatment given, etc.", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "grid", "grid-cols-2", "gap-3"], ["type", "radio", "name", "status", "value", "active", "checked", "", 1, "h-4", "w-4", "text-blue-600", "focus:ring-blue-500"], ["type", "radio", "name", "status", "value", "resolved", 1, "h-4", "w-4", "text-green-600", "focus:ring-green-500"], [1, "my-4", "border-gray-300", "dark:border-gray-600"], [1, "flex", "justify-end", "space-x-3"], ["type", "button", 1, "px-4", "py-2", "border", "border-gray-300", "rounded-lg", "text-gray-700", "hover:bg-gray-50", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500"], ["type", "submit", 1, "px-4", "py-2", "bg-blue-600", "text-white", "rounded-lg", "hover:bg-blue-700", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:ring-offset-2"]], template: function NewAllergiesComponent_Template(rf, ctx) {
+    if (rf & 1) {
+      const _r1 = \u0275\u0275getCurrentView();
+      \u0275\u0275elementStart(0, "div", 1, 0)(2, "div", 2)(3, "div", 3)(4, "div", 4)(5, "div");
+      \u0275\u0275element(6, "i", 5);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(7, "div")(8, "h3", 6);
+      \u0275\u0275text(9, " New Allergy ");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(10, "button", 7);
+      \u0275\u0275listener("click", function NewAllergiesComponent_Template_button_click_10_listener() {
+        \u0275\u0275restoreView(_r1);
+        return \u0275\u0275resetView(ctx.closeModal());
+      });
+      \u0275\u0275namespaceSVG();
+      \u0275\u0275elementStart(11, "svg", 8);
+      \u0275\u0275element(12, "path", 9);
+      \u0275\u0275elementEnd();
+      \u0275\u0275namespaceHTML();
+      \u0275\u0275elementStart(13, "span", 10);
+      \u0275\u0275text(14, "Close modal");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(15, "div", 11)(16, "form")(17, "div", 12)(18, "label", 13);
+      \u0275\u0275text(19, "Allergy Name*");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(20, "div", 14);
+      \u0275\u0275element(21, "input", 15);
+      \u0275\u0275elementStart(22, "div", 16);
+      \u0275\u0275element(23, "i", 17);
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(24, "div", 12)(25, "label", 18);
+      \u0275\u0275text(26, "Reaction Type*");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(27, "select", 19)(28, "option", 20);
+      \u0275\u0275text(29, "Select reaction type");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(30, "option", 21);
+      \u0275\u0275text(31, "Anaphylaxis");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(32, "option", 22);
+      \u0275\u0275text(33, "Rash/Hives");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(34, "option", 23);
+      \u0275\u0275text(35, "Swelling");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(36, "option", 24);
+      \u0275\u0275text(37, "Respiratory distress");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(38, "option", 25);
+      \u0275\u0275text(39, "GI symptoms");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(40, "option", 26);
+      \u0275\u0275text(41, "Other");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(42, "div", 12)(43, "label", 27);
+      \u0275\u0275text(44, "Severity*");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(45, "div", 28)(46, "label", 29);
+      \u0275\u0275element(47, "input", 30);
+      \u0275\u0275elementStart(48, "span", 31);
+      \u0275\u0275text(49, "Mild");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(50, "label", 29);
+      \u0275\u0275element(51, "input", 32);
+      \u0275\u0275elementStart(52, "span", 31);
+      \u0275\u0275text(53, "Moderate");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(54, "label", 29);
+      \u0275\u0275element(55, "input", 33);
+      \u0275\u0275elementStart(56, "span", 31);
+      \u0275\u0275text(57, "Severe");
+      \u0275\u0275elementEnd()()()();
+      \u0275\u0275elementStart(58, "div", 12)(59, "label", 34);
+      \u0275\u0275text(60, "Onset Date");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(61, "div", 14);
+      \u0275\u0275element(62, "input", 35);
+      \u0275\u0275elementStart(63, "div", 16);
+      \u0275\u0275element(64, "i", 36);
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(65, "div", 37)(66, "label", 38);
+      \u0275\u0275text(67, "Additional Notes");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(68, "textarea", 39);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(69, "div", 37)(70, "label", 27);
+      \u0275\u0275text(71, "Current Status");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(72, "div", 40)(73, "label", 29);
+      \u0275\u0275element(74, "input", 41);
+      \u0275\u0275elementStart(75, "span", 31);
+      \u0275\u0275text(76, "Active");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(77, "label", 29);
+      \u0275\u0275element(78, "input", 42);
+      \u0275\u0275elementStart(79, "span", 31);
+      \u0275\u0275text(80, "Resolved");
+      \u0275\u0275elementEnd()()()();
+      \u0275\u0275element(81, "hr", 43);
+      \u0275\u0275elementStart(82, "div", 44)(83, "button", 45);
+      \u0275\u0275text(84, " Cancel ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(85, "button", 46);
+      \u0275\u0275text(86, " Save ");
+      \u0275\u0275elementEnd()()()()()()();
+    }
+  }, encapsulation: 2 });
+};
+(() => {
+  (typeof ngDevMode === "undefined" || ngDevMode) && setClassMetadata(NewAllergiesComponent, [{
+    type: Component,
+    args: [{ selector: "app-new-allergies", imports: [], template: '<div #newAllergy id="modalEl" tabindex="-1" aria-hidden="true"\r\n  class="fixed left-0 right-0 top-0 z-50 hidden h-[calc(100%-1rem)] max-h-full w-full overflow-y-auto overflow-x-hidden p-4 md:inset-0">\r\n  <div class="relative max-h-full w-full max-w-2xl">\r\n    <!-- Modal content -->\r\n    <div class="relative rounded-lg bg-white shadow-sm dark:bg-gray-700">\r\n      <!-- Modal header -->\r\n      <div\r\n        class="flex space-x-4 items-center text-white bg-blue-600  justify-between rounded-t border-b p-2.5 dark:border-gray-600">\r\n        <div>\r\n          <i class="fas fa-xl fa-allergies"></i>\r\n        </div>\r\n        <div>\r\n          <h3 class="text-xl font-semibold  lg:text-2xl">\r\n            New Allergy\r\n          </h3>\r\n        </div>\r\n        <button type="button" (click)="closeModal()"\r\n          class="ms-auto inline-flex h-8 w-8 items-center justify-center rounded-lg bg-transparent text-sm text-gray-400 hover:bg-gray-200 hover:text-gray-900 dark:hover:bg-gray-600 dark:hover:text-white">\r\n          <svg class="h-3 w-3" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 14 14">\r\n            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"\r\n              d="m1 1 6 6m0 0 6 6M7 7l6-6M7 7l-6 6" />\r\n          </svg>\r\n          <span class="sr-only">Close modal</span>\r\n        </button>\r\n      </div>\r\n      <!-- Modal body -->\r\n      <div class="space-y-6 p-5">\r\n        <form>\r\n          <!-- Allergy Name -->\r\n          <div class="mb-4">\r\n            <label for="allergyName" class="block text-sm font-medium text-gray-700 mb-1">Allergy Name*</label>\r\n            <div class="relative">\r\n              <input type="text" id="allergyName"\r\n                class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n                placeholder="e.g. Penicillin, Peanuts" required>\r\n              <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">\r\n                <i class="fas fa-pills text-gray-400"></i>\r\n              </div>\r\n            </div>\r\n          </div>\r\n\r\n          <!-- Reaction Type -->\r\n          <div class="mb-4">\r\n            <label for="reactionType" class="block text-sm font-medium text-gray-700 mb-1">Reaction Type*</label>\r\n            <select id="reactionType"\r\n              class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n              required>\r\n              <option value="">Select reaction type</option>\r\n              <option value="anaphylaxis">Anaphylaxis</option>\r\n              <option value="rash">Rash/Hives</option>\r\n              <option value="swelling">Swelling</option>\r\n              <option value="respiratory">Respiratory distress</option>\r\n              <option value="gi">GI symptoms</option>\r\n              <option value="other">Other</option>\r\n            </select>\r\n          </div>\r\n\r\n          <!-- Severity -->\r\n          <div class="mb-4">\r\n            <label class="block text-sm font-medium text-gray-700 mb-2">Severity*</label>\r\n            <div class="grid grid-cols-3 gap-3">\r\n              <label class="inline-flex items-center">\r\n                <input type="radio" name="severity" value="mild" class="h-4 w-4 text-blue-600 focus:ring-blue-500">\r\n                <span class="ml-2 text-sm text-gray-700">Mild</span>\r\n              </label>\r\n              <label class="inline-flex items-center">\r\n                <input type="radio" name="severity" value="moderate"\r\n                  class="h-4 w-4 text-yellow-500 focus:ring-yellow-500" checked>\r\n                <span class="ml-2 text-sm text-gray-700">Moderate</span>\r\n              </label>\r\n              <label class="inline-flex items-center">\r\n                <input type="radio" name="severity" value="severe" class="h-4 w-4 text-red-600 focus:ring-red-500">\r\n                <span class="ml-2 text-sm text-gray-700">Severe</span>\r\n              </label>\r\n            </div>\r\n          </div>\r\n\r\n          <!-- Onset Date -->\r\n          <div class="mb-4">\r\n            <label for="onsetDate" class="block text-sm font-medium text-gray-700 mb-1">Onset Date</label>\r\n            <div class="relative">\r\n              <input type="date" id="onsetDate"\r\n                class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">\r\n              <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">\r\n                <i class="fas fa-calendar-alt text-gray-400"></i>\r\n              </div>\r\n            </div>\r\n          </div>\r\n\r\n          <!-- Notes -->\r\n          <div class="mb-6">\r\n            <label for="notes" class="block text-sm font-medium text-gray-700 mb-1">Additional Notes</label>\r\n            <textarea id="notes" rows="3"\r\n              class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n              placeholder="Describe the reaction in detail, treatment given, etc."></textarea>\r\n          </div>\r\n\r\n          <!-- Current Status -->\r\n          <div class="mb-6">\r\n            <label class="block text-sm font-medium text-gray-700 mb-2">Current Status</label>\r\n            <div class="grid grid-cols-2 gap-3">\r\n              <label class="inline-flex items-center">\r\n                <input type="radio" name="status" value="active" class="h-4 w-4 text-blue-600 focus:ring-blue-500"\r\n                  checked>\r\n                <span class="ml-2 text-sm text-gray-700">Active</span>\r\n              </label>\r\n              <label class="inline-flex items-center">\r\n                <input type="radio" name="status" value="resolved" class="h-4 w-4 text-green-600 focus:ring-green-500">\r\n                <span class="ml-2 text-sm text-gray-700">Resolved</span>\r\n              </label>\r\n            </div>\r\n          </div>\r\n           <hr class="my-4 border-gray-300 dark:border-gray-600" />\r\n          <!-- Form Actions -->\r\n          <div class="flex justify-end space-x-3">\r\n            <button type="button"\r\n              class="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">\r\n              Cancel\r\n            </button>\r\n            <button type="submit"\r\n              class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">\r\n            Save\r\n            </button>\r\n          </div>\r\n        </form>\r\n      </div>\r\n    </div>\r\n  </div>\r\n</div>\r\n' }]
+  }], () => [{ type: ShareDataService }], { $NewAllergy: [{
+    type: ViewChild,
+    args: ["newAllergy"]
+  }] });
+})();
+(() => {
+  (typeof ngDevMode === "undefined" || ngDevMode) && \u0275setClassDebugInfo(NewAllergiesComponent, { className: "NewAllergiesComponent", filePath: "src/app/patient/new-allergies/new-allergies.component.ts", lineNumber: 12 });
+})();
+
+// src/app/patient/new-current-medication/new-current-medication.component.ts
+var _c03 = ["newcurrentMedication"];
+var NewCurrentMedicationComponent = class _NewCurrentMedicationComponent {
+  shareDataService;
+  newCurrentMedication;
+  modalElement;
+  constructor(shareDataService) {
+    this.shareDataService = shareDataService;
+    effect(() => {
+      this.showDialog();
+    });
+  }
+  ngAfterViewInit() {
+    const modalOptions = {
+      placement: "top-center",
+      backdrop: "dynamic",
+      backdropClasses: "bg-gray-900/50 dark:bg-gray-900/80 fixed inset-0 z-40",
+      closable: true,
+      onHide: () => {
+        this.shareDataService.setDilaogName(DialogNameEnum.none);
+      },
+      onShow: () => {
+        console.log("modal is shown");
+      },
+      onToggle: () => {
+        console.log("modal has been toggled");
+      }
+    };
+    const instanceOptions = {
+      id: "modalEl",
+      override: true
+    };
+    this.modalElement = new modal_default(this.newCurrentMedication.nativeElement, modalOptions, instanceOptions);
+  }
+  showDialog() {
+    if (this.shareDataService.getDialogName() === DialogNameEnum.newCurrentMedication) {
+      this.modalElement.show();
+    }
+  }
+  closeModal() {
+    this.modalElement.hide();
+  }
+  static \u0275fac = function NewCurrentMedicationComponent_Factory(__ngFactoryType__) {
+    return new (__ngFactoryType__ || _NewCurrentMedicationComponent)(\u0275\u0275directiveInject(ShareDataService));
+  };
+  static \u0275cmp = /* @__PURE__ */ \u0275\u0275defineComponent({ type: _NewCurrentMedicationComponent, selectors: [["app-new-current-medication"]], viewQuery: function NewCurrentMedicationComponent_Query(rf, ctx) {
+    if (rf & 1) {
+      \u0275\u0275viewQuery(_c03, 5);
+    }
+    if (rf & 2) {
+      let _t;
+      \u0275\u0275queryRefresh(_t = \u0275\u0275loadQuery()) && (ctx.newCurrentMedication = _t.first);
+    }
+  }, decls: 117, vars: 0, consts: [["newcurrentMedication", ""], ["id", "modalEl", "tabindex", "-1", "aria-hidden", "true", 1, "fixed", "left-0", "right-0", "top-0", "z-50", "hidden", "h-[calc(100%-1rem)]", "max-h-full", "w-full", "overflow-y-auto", "overflow-x-hidden", "p-4", "md:inset-0"], [1, "relative", "max-h-full", "w-full", "max-w-2xl"], [1, "relative", "rounded-lg", "bg-white", "shadow-sm", "dark:bg-gray-700"], [1, "flex", "space-x-2", "items-center", "text-white", "bg-blue-600", "justify-between", "rounded-t", "border-b", "p-2.5", "dark:border-gray-600"], [1, "fa-solid", "fa-tablets"], [1, "text-xl", "font-semibold", "lg:text-2xl"], ["type", "button", 1, "ms-auto", "inline-flex", "h-8", "w-8", "items-center", "justify-center", "rounded-lg", "bg-transparent", "text-sm", "text-gray-400", "hover:bg-gray-200", "hover:text-gray-900", "dark:hover:bg-gray-600", "dark:hover:text-white", 3, "click"], ["aria-hidden", "true", "xmlns", "http://www.w3.org/2000/svg", "fill", "none", "viewBox", "0 0 14 14", 1, "h-3", "w-3"], ["stroke", "currentColor", "stroke-linecap", "round", "stroke-linejoin", "round", "stroke-width", "2", "d", "m1 1 6 6m0 0 6 6M7 7l6-6M7 7l-6 6"], [1, "sr-only"], [1, "space-y-6", "p-5"], [1, "p-6"], [1, "mb-4"], ["for", "medicationName", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], [1, "relative"], ["type", "text", "id", "medicationName", "placeholder", "e.g. Lisinopril, Metformin", "required", "", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "absolute", "inset-y-0", "right-0", "flex", "items-center", "pr-3", "pointer-events-none"], [1, "fas", "fa-prescription-bottle-alt", "text-gray-400"], [1, "grid", "grid-cols-1", "md:grid-cols-2", "gap-4", "mb-4"], ["for", "dosage", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "text", "id", "dosage", "placeholder", "e.g. 10 mg", "required", "", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "fas", "fa-weight", "text-gray-400"], ["for", "frequency", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["id", "frequency", "required", "", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], ["value", ""], ["value", "once_daily"], ["value", "twice_daily"], ["value", "three_times"], ["value", "four_times"], ["value", "every_other_day"], ["value", "weekly"], ["value", "as_needed"], ["value", "other"], ["for", "route", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["id", "route", "required", "", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], ["value", "oral"], ["value", "topical"], ["value", "inhalation"], ["value", "injection"], ["value", "sublingual"], ["value", "rectal"], ["for", "prescriptionDate", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "date", "id", "prescriptionDate", "required", "", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "fas", "fa-calendar-alt", "text-gray-400"], ["for", "physician", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "text", "id", "physician", "placeholder", "Dr. Smith", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], ["for", "reason", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "text", "id", "reason", "placeholder", "e.g. Hypertension, Diabetes", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "mb-6"], ["for", "instructions", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["id", "instructions", "rows", "3", "placeholder", "Take with food, Avoid alcohol, etc.", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "block", "text-sm", "font-medium", "text-gray-700", "mb-2"], [1, "grid", "grid-cols-3", "gap-3"], [1, "inline-flex", "items-center"], ["type", "radio", "name", "status", "value", "active", "checked", "", 1, "h-4", "w-4", "text-blue-600", "focus:ring-blue-500"], [1, "ml-2", "text-sm", "text-gray-700"], ["type", "radio", "name", "status", "value", "discontinued", 1, "h-4", "w-4", "text-gray-600", "focus:ring-gray-500"], ["type", "radio", "name", "status", "value", "completed", 1, "h-4", "w-4", "text-green-600", "focus:ring-green-500"], [1, "my-4", "border-gray-300", "dark:border-gray-600"], [1, "flex", "justify-end", "space-x-3"], ["type", "button", 1, "px-4", "py-2", "border", "border-gray-300", "rounded-lg", "text-gray-700", "hover:bg-gray-50", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500"], ["type", "submit", 1, "px-4", "py-2", "bg-blue-600", "text-white", "rounded-lg", "hover:bg-blue-700", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:ring-offset-2"]], template: function NewCurrentMedicationComponent_Template(rf, ctx) {
+    if (rf & 1) {
+      const _r1 = \u0275\u0275getCurrentView();
+      \u0275\u0275elementStart(0, "div", 1, 0)(2, "div", 2)(3, "div", 3)(4, "div", 4)(5, "div");
+      \u0275\u0275element(6, "i", 5);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(7, "div")(8, "h3", 6);
+      \u0275\u0275text(9, " Current Medication ");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(10, "button", 7);
+      \u0275\u0275listener("click", function NewCurrentMedicationComponent_Template_button_click_10_listener() {
+        \u0275\u0275restoreView(_r1);
+        return \u0275\u0275resetView(ctx.closeModal());
+      });
+      \u0275\u0275namespaceSVG();
+      \u0275\u0275elementStart(11, "svg", 8);
+      \u0275\u0275element(12, "path", 9);
+      \u0275\u0275elementEnd();
+      \u0275\u0275namespaceHTML();
+      \u0275\u0275elementStart(13, "span", 10);
+      \u0275\u0275text(14, "Close modal");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(15, "div", 11)(16, "div", 12)(17, "form")(18, "div", 13)(19, "label", 14);
+      \u0275\u0275text(20, "Medication Name*");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(21, "div", 15);
+      \u0275\u0275element(22, "input", 16);
+      \u0275\u0275elementStart(23, "div", 17);
+      \u0275\u0275element(24, "i", 18);
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(25, "div", 19)(26, "div")(27, "label", 20);
+      \u0275\u0275text(28, "Dosage*");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(29, "div", 15);
+      \u0275\u0275element(30, "input", 21);
+      \u0275\u0275elementStart(31, "div", 17);
+      \u0275\u0275element(32, "i", 22);
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(33, "div")(34, "label", 23);
+      \u0275\u0275text(35, "Frequency*");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(36, "select", 24)(37, "option", 25);
+      \u0275\u0275text(38, "Select frequency");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(39, "option", 26);
+      \u0275\u0275text(40, "Once daily");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(41, "option", 27);
+      \u0275\u0275text(42, "Twice daily");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(43, "option", 28);
+      \u0275\u0275text(44, "Three times daily");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(45, "option", 29);
+      \u0275\u0275text(46, "Four times daily");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(47, "option", 30);
+      \u0275\u0275text(48, "Every other day");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(49, "option", 31);
+      \u0275\u0275text(50, "Weekly");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(51, "option", 32);
+      \u0275\u0275text(52, "As needed");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(53, "option", 33);
+      \u0275\u0275text(54, "Other");
+      \u0275\u0275elementEnd()()()();
+      \u0275\u0275elementStart(55, "div", 19)(56, "div")(57, "label", 34);
+      \u0275\u0275text(58, "Route*");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(59, "select", 35)(60, "option", 25);
+      \u0275\u0275text(61, "Select route");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(62, "option", 36);
+      \u0275\u0275text(63, "Oral");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(64, "option", 37);
+      \u0275\u0275text(65, "Topical");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(66, "option", 38);
+      \u0275\u0275text(67, "Inhalation");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(68, "option", 39);
+      \u0275\u0275text(69, "Injection");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(70, "option", 40);
+      \u0275\u0275text(71, "Sublingual");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(72, "option", 41);
+      \u0275\u0275text(73, "Rectal");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(74, "option", 33);
+      \u0275\u0275text(75, "Other");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(76, "div")(77, "label", 42);
+      \u0275\u0275text(78, "Prescription Date*");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(79, "div", 15);
+      \u0275\u0275element(80, "input", 43);
+      \u0275\u0275elementStart(81, "div", 17);
+      \u0275\u0275element(82, "i", 44);
+      \u0275\u0275elementEnd()()()();
+      \u0275\u0275elementStart(83, "div", 13)(84, "label", 45);
+      \u0275\u0275text(85, "Prescribing Physician");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(86, "input", 46);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(87, "div", 13)(88, "label", 47);
+      \u0275\u0275text(89, "Reason for Medication");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(90, "input", 48);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(91, "div", 49)(92, "label", 50);
+      \u0275\u0275text(93, "Special Instructions");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(94, "textarea", 51);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(95, "div", 49)(96, "label", 52);
+      \u0275\u0275text(97, "Current Status*");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(98, "div", 53)(99, "label", 54);
+      \u0275\u0275element(100, "input", 55);
+      \u0275\u0275elementStart(101, "span", 56);
+      \u0275\u0275text(102, "Active");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(103, "label", 54);
+      \u0275\u0275element(104, "input", 57);
+      \u0275\u0275elementStart(105, "span", 56);
+      \u0275\u0275text(106, "Discontinued");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(107, "label", 54);
+      \u0275\u0275element(108, "input", 58);
+      \u0275\u0275elementStart(109, "span", 56);
+      \u0275\u0275text(110, "Completed");
+      \u0275\u0275elementEnd()()()();
+      \u0275\u0275element(111, "hr", 59);
+      \u0275\u0275elementStart(112, "div", 60)(113, "button", 61);
+      \u0275\u0275text(114, " Cancel ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(115, "button", 62);
+      \u0275\u0275text(116, " Save Medication ");
+      \u0275\u0275elementEnd()()()()()()()();
+    }
+  }, encapsulation: 2 });
+};
+(() => {
+  (typeof ngDevMode === "undefined" || ngDevMode) && setClassMetadata(NewCurrentMedicationComponent, [{
+    type: Component,
+    args: [{ selector: "app-new-current-medication", imports: [], template: '<div #newcurrentMedication id="modalEl" tabindex="-1" aria-hidden="true"\r\n  class="fixed left-0 right-0 top-0 z-50 hidden h-[calc(100%-1rem)] max-h-full w-full overflow-y-auto overflow-x-hidden p-4 md:inset-0">\r\n  <div class="relative max-h-full w-full max-w-2xl">\r\n    <!-- Modal content -->\r\n    <div class="relative rounded-lg bg-white shadow-sm dark:bg-gray-700">\r\n      <!-- Modal header -->\r\n      <div\r\n        class="flex space-x-2 items-center text-white bg-blue-600  justify-between rounded-t border-b p-2.5 dark:border-gray-600">\r\n        <div>\r\n          <i class="fa-solid fa-tablets"></i>\r\n        </div>\r\n        <div>\r\n          <h3 class="text-xl font-semibold  lg:text-2xl">\r\n            Current Medication\r\n          </h3>\r\n        </div>\r\n        <button type="button" (click)="closeModal()"\r\n          class="ms-auto inline-flex h-8 w-8 items-center justify-center rounded-lg bg-transparent text-sm text-gray-400 hover:bg-gray-200 hover:text-gray-900 dark:hover:bg-gray-600 dark:hover:text-white">\r\n          <svg class="h-3 w-3" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 14 14">\r\n            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"\r\n              d="m1 1 6 6m0 0 6 6M7 7l6-6M7 7l-6 6" />\r\n          </svg>\r\n          <span class="sr-only">Close modal</span>\r\n        </button>\r\n      </div>\r\n      <!-- Modal body -->\r\n      <div class="space-y-6 p-5">\r\n\r\n        <!-- Form Content -->\r\n        <div class="p-6">\r\n          <form>\r\n            <!-- Medication Name -->\r\n            <div class="mb-4">\r\n              <label for="medicationName" class="block text-sm font-medium text-gray-700 mb-1">Medication Name*</label>\r\n              <div class="relative">\r\n                <input type="text" id="medicationName"\r\n                  class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n                  placeholder="e.g. Lisinopril, Metformin" required>\r\n                <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">\r\n                  <i class="fas fa-prescription-bottle-alt text-gray-400"></i>\r\n                </div>\r\n              </div>\r\n            </div>\r\n\r\n            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">\r\n              <!-- Dosage -->\r\n              <div>\r\n                <label for="dosage" class="block text-sm font-medium text-gray-700 mb-1">Dosage*</label>\r\n                <div class="relative">\r\n                  <input type="text" id="dosage"\r\n                    class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n                    placeholder="e.g. 10 mg" required>\r\n                  <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">\r\n                    <i class="fas fa-weight text-gray-400"></i>\r\n                  </div>\r\n                </div>\r\n              </div>\r\n\r\n              <!-- Frequency -->\r\n              <div>\r\n                <label for="frequency" class="block text-sm font-medium text-gray-700 mb-1">Frequency*</label>\r\n                <select id="frequency"\r\n                  class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n                  required>\r\n                  <option value="">Select frequency</option>\r\n                  <option value="once_daily">Once daily</option>\r\n                  <option value="twice_daily">Twice daily</option>\r\n                  <option value="three_times">Three times daily</option>\r\n                  <option value="four_times">Four times daily</option>\r\n                  <option value="every_other_day">Every other day</option>\r\n                  <option value="weekly">Weekly</option>\r\n                  <option value="as_needed">As needed</option>\r\n                  <option value="other">Other</option>\r\n                </select>\r\n              </div>\r\n            </div>\r\n\r\n            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">\r\n              <!-- Route -->\r\n              <div>\r\n                <label for="route" class="block text-sm font-medium text-gray-700 mb-1">Route*</label>\r\n                <select id="route"\r\n                  class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n                  required>\r\n                  <option value="">Select route</option>\r\n                  <option value="oral">Oral</option>\r\n                  <option value="topical">Topical</option>\r\n                  <option value="inhalation">Inhalation</option>\r\n                  <option value="injection">Injection</option>\r\n                  <option value="sublingual">Sublingual</option>\r\n                  <option value="rectal">Rectal</option>\r\n                  <option value="other">Other</option>\r\n                </select>\r\n              </div>\r\n\r\n              <!-- Prescription Date -->\r\n              <div>\r\n                <label for="prescriptionDate" class="block text-sm font-medium text-gray-700 mb-1">Prescription\r\n                  Date*</label>\r\n                <div class="relative">\r\n                  <input type="date" id="prescriptionDate"\r\n                    class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n                    required>\r\n                  <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">\r\n                    <i class="fas fa-calendar-alt text-gray-400"></i>\r\n                  </div>\r\n                </div>\r\n              </div>\r\n            </div>\r\n\r\n            <!-- Prescribing Physician -->\r\n            <div class="mb-4">\r\n              <label for="physician" class="block text-sm font-medium text-gray-700 mb-1">Prescribing Physician</label>\r\n              <input type="text" id="physician"\r\n                class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n                placeholder="Dr. Smith">\r\n            </div>\r\n\r\n            <!-- Reason for Medication -->\r\n            <div class="mb-4">\r\n              <label for="reason" class="block text-sm font-medium text-gray-700 mb-1">Reason for Medication</label>\r\n              <input type="text" id="reason"\r\n                class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n                placeholder="e.g. Hypertension, Diabetes">\r\n            </div>\r\n\r\n            <!-- Instructions -->\r\n            <div class="mb-6">\r\n              <label for="instructions" class="block text-sm font-medium text-gray-700 mb-1">Special\r\n                Instructions</label>\r\n              <textarea id="instructions" rows="3"\r\n                class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n                placeholder="Take with food, Avoid alcohol, etc."></textarea>\r\n            </div>\r\n\r\n            <!-- Current Status -->\r\n            <div class="mb-6">\r\n              <label class="block text-sm font-medium text-gray-700 mb-2">Current Status*</label>\r\n              <div class="grid grid-cols-3 gap-3">\r\n                <label class="inline-flex items-center">\r\n                  <input type="radio" name="status" value="active" class="h-4 w-4 text-blue-600 focus:ring-blue-500"\r\n                    checked>\r\n                  <span class="ml-2 text-sm text-gray-700">Active</span>\r\n                </label>\r\n                <label class="inline-flex items-center">\r\n                  <input type="radio" name="status" value="discontinued"\r\n                    class="h-4 w-4 text-gray-600 focus:ring-gray-500">\r\n                  <span class="ml-2 text-sm text-gray-700">Discontinued</span>\r\n                </label>\r\n                <label class="inline-flex items-center">\r\n                  <input type="radio" name="status" value="completed"\r\n                    class="h-4 w-4 text-green-600 focus:ring-green-500">\r\n                  <span class="ml-2 text-sm text-gray-700">Completed</span>\r\n                </label>\r\n              </div>\r\n            </div>\r\n            <hr class="my-4 border-gray-300 dark:border-gray-600" />\r\n            <!-- Form Actions -->\r\n\r\n            <div class="flex justify-end space-x-3">\r\n              <button type="button"\r\n                class="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">\r\n                Cancel\r\n              </button>\r\n              <button type="submit"\r\n                class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">\r\n                Save Medication\r\n              </button>\r\n            </div>\r\n          </form>\r\n        </div>\r\n      </div>\r\n\r\n    </div>\r\n  </div>\r\n</div>\r\n' }]
+  }], () => [{ type: ShareDataService }], { newCurrentMedication: [{
+    type: ViewChild,
+    args: ["newcurrentMedication"]
+  }] });
+})();
+(() => {
+  (typeof ngDevMode === "undefined" || ngDevMode) && \u0275setClassDebugInfo(NewCurrentMedicationComponent, { className: "NewCurrentMedicationComponent", filePath: "src/app/patient/new-current-medication/new-current-medication.component.ts", lineNumber: 12 });
+})();
+
+// src/app/patient/new-family-history/new-family-history.component.ts
+var _c04 = ["newFamilyHistory"];
+var NewFamilyHistoryComponent = class _NewFamilyHistoryComponent {
+  shareDataService;
+  $NewFamilyHistory;
+  modalElement;
+  constructor(shareDataService) {
+    this.shareDataService = shareDataService;
+    effect(() => {
+      this.showDialog();
+    });
+  }
+  ngAfterViewInit() {
+    const modalOptions = {
+      placement: "top-center",
+      backdrop: "dynamic",
+      backdropClasses: "bg-gray-900/50 dark:bg-gray-900/80 fixed inset-0 z-40",
+      closable: true,
+      onHide: () => {
+        this.shareDataService.setDilaogName(DialogNameEnum.none);
+      },
+      onShow: () => {
+        console.log("modal is shown");
+      },
+      onToggle: () => {
+        console.log("modal has been toggled");
+      }
+    };
+    const instanceOptions = {
+      id: "modalEl",
+      override: true
+    };
+    this.modalElement = new modal_default(this.$NewFamilyHistory.nativeElement, modalOptions, instanceOptions);
+  }
+  showDialog() {
+    if (this.shareDataService.getDialogName() === DialogNameEnum.newFamilyHistory) {
+      this.modalElement.show();
+    }
+  }
+  closeModal() {
+    this.modalElement.hide();
+  }
+  static \u0275fac = function NewFamilyHistoryComponent_Factory(__ngFactoryType__) {
+    return new (__ngFactoryType__ || _NewFamilyHistoryComponent)(\u0275\u0275directiveInject(ShareDataService));
+  };
+  static \u0275cmp = /* @__PURE__ */ \u0275\u0275defineComponent({ type: _NewFamilyHistoryComponent, selectors: [["app-new-family-history"]], viewQuery: function NewFamilyHistoryComponent_Query(rf, ctx) {
+    if (rf & 1) {
+      \u0275\u0275viewQuery(_c04, 5);
+    }
+    if (rf & 2) {
+      let _t;
+      \u0275\u0275queryRefresh(_t = \u0275\u0275loadQuery()) && (ctx.$NewFamilyHistory = _t.first);
+    }
+  }, decls: 117, vars: 0, consts: [["newFamilyHistory", ""], ["id", "modalEl", "tabindex", "-1", "aria-hidden", "true", 1, "fixed", "left-0", "right-0", "top-0", "z-50", "hidden", "h-[calc(100%-1rem)]", "max-h-full", "w-full", "overflow-y-auto", "overflow-x-hidden", "p-4", "md:inset-0"], [1, "relative", "max-h-full", "w-full", "max-w-2xl"], [1, "relative", "rounded-lg", "bg-white", "shadow-sm", "dark:bg-gray-700"], [1, "flex", "space-x-4", "items-center", "text-white", "bg-blue-600", "justify-between", "rounded-t", "border-b", "p-2.5", "dark:border-gray-600"], [1, "fa-solid", "fa-person-breastfeeding"], [1, "text-xl", "lg:text-2xl"], ["type", "button", 1, "ms-auto", "inline-flex", "h-8", "w-8", "items-center", "justify-center", "rounded-lg", "bg-transparent", "text-sm", "text-gray-400", "hover:bg-gray-200", "hover:text-gray-900", "dark:hover:bg-gray-600", "dark:hover:text-white", 3, "click"], ["aria-hidden", "true", "xmlns", "http://www.w3.org/2000/svg", "fill", "none", "viewBox", "0 0 14 14", 1, "h-3", "w-3"], ["stroke", "currentColor", "stroke-linecap", "round", "stroke-linejoin", "round", "stroke-width", "2", "d", "m1 1 6 6m0 0 6 6M7 7l6-6M7 7l-6 6"], [1, "sr-only"], [1, "p-6"], [1, "mb-4"], ["for", "familyMember", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["id", "familyMember", "required", "", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], ["value", ""], ["value", "mother"], ["value", "father"], ["value", "sister"], ["value", "brother"], ["value", "daughter"], ["value", "son"], ["value", "grandmother_maternal"], ["value", "grandfather_maternal"], ["value", "grandmother_paternal"], ["value", "grandfather_paternal"], ["value", "aunt"], ["value", "uncle"], ["value", "cousin"], ["value", "other"], ["for", "condition", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], [1, "relative"], ["type", "text", "id", "condition", "placeholder", "e.g. Heart Disease, Diabetes", "required", "", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "absolute", "inset-y-0", "right-0", "flex", "items-center", "pr-3", "pointer-events-none"], [1, "fas", "fa-heartbeat", "text-gray-400"], [1, "grid", "grid-cols-1", "md:grid-cols-2", "gap-4", "mb-4"], ["for", "ageAtDiagnosis", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "number", "id", "ageAtDiagnosis", "min", "0", "max", "120", "placeholder", "Age in years", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "text-gray-400"], ["for", "status", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["id", "status", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], ["value", "alive_with_condition"], ["value", "alive_no_condition"], ["value", "deceased_with_condition"], ["value", "deceased_other_cause"], ["value", "unknown"], ["id", "ageAtDeathContainer", 1, "mb-4", "hidden"], ["for", "ageAtDeath", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "number", "id", "ageAtDeath", "min", "0", "max", "120", "placeholder", "Age in years", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], ["id", "causeOfDeathContainer", 1, "mb-4", "hidden"], ["for", "causeOfDeath", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "text", "id", "causeOfDeath", "placeholder", "If known", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "block", "text-sm", "font-medium", "text-gray-700", "mb-2"], [1, "grid", "grid-cols-2", "gap-3"], [1, "inline-flex", "items-center"], ["type", "radio", "name", "familySide", "value", "maternal", 1, "h-4", "w-4", "text-pink-500", "focus:ring-pink-500"], [1, "ml-2", "text-sm", "text-gray-700"], ["type", "radio", "name", "familySide", "value", "paternal", 1, "h-4", "w-4", "text-blue-500", "focus:ring-blue-500"], [1, "mb-6"], ["for", "notes", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["id", "notes", "rows", "2", "placeholder", "Any additional details about the condition", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "my-4", "border-gray-300", "dark:border-gray-600"], [1, "flex", "justify-end", "space-x-3"], ["type", "button", 1, "px-4", "py-2", "border", "border-gray-300", "rounded-lg", "text-gray-700", "hover:bg-gray-50", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500"], ["type", "submit", 1, "px-4", "py-2", "bg-blue-600", "text-white", "rounded-lg", "hover:bg-blue-700", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:ring-offset-2"]], template: function NewFamilyHistoryComponent_Template(rf, ctx) {
+    if (rf & 1) {
+      const _r1 = \u0275\u0275getCurrentView();
+      \u0275\u0275elementStart(0, "div", 1, 0)(2, "div", 2)(3, "div", 3)(4, "div", 4)(5, "div");
+      \u0275\u0275element(6, "i", 5);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(7, "div")(8, "h3", 6);
+      \u0275\u0275text(9, " familly history ");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(10, "button", 7);
+      \u0275\u0275listener("click", function NewFamilyHistoryComponent_Template_button_click_10_listener() {
+        \u0275\u0275restoreView(_r1);
+        return \u0275\u0275resetView(ctx.closeModal());
+      });
+      \u0275\u0275namespaceSVG();
+      \u0275\u0275elementStart(11, "svg", 8);
+      \u0275\u0275element(12, "path", 9);
+      \u0275\u0275elementEnd();
+      \u0275\u0275namespaceHTML();
+      \u0275\u0275elementStart(13, "span", 10);
+      \u0275\u0275text(14, "Close modal");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(15, "div", 11)(16, "form")(17, "div", 12)(18, "label", 13);
+      \u0275\u0275text(19, "Family Member*");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(20, "select", 14)(21, "option", 15);
+      \u0275\u0275text(22, "Select family member");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(23, "option", 16);
+      \u0275\u0275text(24, "Mother");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(25, "option", 17);
+      \u0275\u0275text(26, "Father");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(27, "option", 18);
+      \u0275\u0275text(28, "Sister");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(29, "option", 19);
+      \u0275\u0275text(30, "Brother");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(31, "option", 20);
+      \u0275\u0275text(32, "Daughter");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(33, "option", 21);
+      \u0275\u0275text(34, "Son");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(35, "option", 22);
+      \u0275\u0275text(36, "Maternal Grandmother");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(37, "option", 23);
+      \u0275\u0275text(38, "Maternal Grandfather");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(39, "option", 24);
+      \u0275\u0275text(40, "Paternal Grandmother");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(41, "option", 25);
+      \u0275\u0275text(42, "Paternal Grandfather");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(43, "option", 26);
+      \u0275\u0275text(44, "Aunt");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(45, "option", 27);
+      \u0275\u0275text(46, "Uncle");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(47, "option", 28);
+      \u0275\u0275text(48, "Cousin");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(49, "option", 29);
+      \u0275\u0275text(50, "Other");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(51, "div", 12)(52, "label", 30);
+      \u0275\u0275text(53, "Medical Condition*");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(54, "div", 31);
+      \u0275\u0275element(55, "input", 32);
+      \u0275\u0275elementStart(56, "div", 33);
+      \u0275\u0275element(57, "i", 34);
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(58, "div", 35)(59, "div")(60, "label", 36);
+      \u0275\u0275text(61, "Age at Diagnosis");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(62, "div", 31);
+      \u0275\u0275element(63, "input", 37);
+      \u0275\u0275elementStart(64, "div", 33)(65, "span", 38);
+      \u0275\u0275text(66, "yrs");
+      \u0275\u0275elementEnd()()()();
+      \u0275\u0275elementStart(67, "div")(68, "label", 39);
+      \u0275\u0275text(69, "Current Status");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(70, "select", 40)(71, "option", 15);
+      \u0275\u0275text(72, "Select status");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(73, "option", 41);
+      \u0275\u0275text(74, "Alive with condition");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(75, "option", 42);
+      \u0275\u0275text(76, "Alive without condition");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(77, "option", 43);
+      \u0275\u0275text(78, "Deceased with condition");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(79, "option", 44);
+      \u0275\u0275text(80, "Deceased - other cause");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(81, "option", 45);
+      \u0275\u0275text(82, "Unknown");
+      \u0275\u0275elementEnd()()()();
+      \u0275\u0275elementStart(83, "div", 46)(84, "label", 47);
+      \u0275\u0275text(85, "Age at Death");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(86, "div", 31);
+      \u0275\u0275element(87, "input", 48);
+      \u0275\u0275elementStart(88, "div", 33)(89, "span", 38);
+      \u0275\u0275text(90, "yrs");
+      \u0275\u0275elementEnd()()()();
+      \u0275\u0275elementStart(91, "div", 49)(92, "label", 50);
+      \u0275\u0275text(93, "Cause of Death");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(94, "input", 51);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(95, "div", 12)(96, "label", 52);
+      \u0275\u0275text(97, "Side of Family");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(98, "div", 53)(99, "label", 54);
+      \u0275\u0275element(100, "input", 55);
+      \u0275\u0275elementStart(101, "span", 56);
+      \u0275\u0275text(102, "Maternal");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(103, "label", 54);
+      \u0275\u0275element(104, "input", 57);
+      \u0275\u0275elementStart(105, "span", 56);
+      \u0275\u0275text(106, "Paternal");
+      \u0275\u0275elementEnd()()()();
+      \u0275\u0275elementStart(107, "div", 58)(108, "label", 59);
+      \u0275\u0275text(109, "Additional Notes");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(110, "textarea", 60);
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(111, "hr", 61);
+      \u0275\u0275elementStart(112, "div", 62)(113, "button", 63);
+      \u0275\u0275text(114, " Cancel ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(115, "button", 64);
+      \u0275\u0275text(116, " Save Family History ");
+      \u0275\u0275elementEnd()()()()()()();
+    }
+  }, encapsulation: 2 });
+};
+(() => {
+  (typeof ngDevMode === "undefined" || ngDevMode) && setClassMetadata(NewFamilyHistoryComponent, [{
+    type: Component,
+    args: [{ selector: "app-new-family-history", imports: [], template: '<div #newFamilyHistory id="modalEl" tabindex="-1" aria-hidden="true"\r\n  class="fixed left-0 right-0 top-0 z-50 hidden h-[calc(100%-1rem)] max-h-full w-full overflow-y-auto overflow-x-hidden p-4 md:inset-0">\r\n  <div class="relative max-h-full w-full max-w-2xl">\r\n    <!-- Modal content -->\r\n    <div class="relative rounded-lg bg-white shadow-sm dark:bg-gray-700">\r\n      <!-- Modal header -->\r\n      <div\r\n        class="flex space-x-4 items-center text-white bg-blue-600  justify-between rounded-t border-b p-2.5 dark:border-gray-600">\r\n        <div>\r\n          <i class="fa-solid fa-person-breastfeeding"></i>\r\n        </div>\r\n        <div>\r\n          <h3 class="text-xl lg:text-2xl">\r\n            familly history\r\n          </h3>\r\n        </div>\r\n        <button type="button" (click)="closeModal()"\r\n          class="ms-auto inline-flex h-8 w-8 items-center justify-center rounded-lg bg-transparent text-sm text-gray-400 hover:bg-gray-200 hover:text-gray-900 dark:hover:bg-gray-600 dark:hover:text-white">\r\n          <svg class="h-3 w-3" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 14 14">\r\n            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"\r\n              d="m1 1 6 6m0 0 6 6M7 7l6-6M7 7l-6 6" />\r\n          </svg>\r\n          <span class="sr-only">Close modal</span>\r\n        </button>\r\n      </div>\r\n      <!-- Modal body -->\r\n\r\n\r\n      <div class="p-6">\r\n        <form>\r\n          <!-- Family Member -->\r\n          <div class="mb-4">\r\n            <label for="familyMember" class="block text-sm font-medium text-gray-700 mb-1">Family Member*</label>\r\n            <select id="familyMember"\r\n              class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n              required>\r\n              <option value="">Select family member</option>\r\n              <option value="mother">Mother</option>\r\n              <option value="father">Father</option>\r\n              <option value="sister">Sister</option>\r\n              <option value="brother">Brother</option>\r\n              <option value="daughter">Daughter</option>\r\n              <option value="son">Son</option>\r\n              <option value="grandmother_maternal">Maternal Grandmother</option>\r\n              <option value="grandfather_maternal">Maternal Grandfather</option>\r\n              <option value="grandmother_paternal">Paternal Grandmother</option>\r\n              <option value="grandfather_paternal">Paternal Grandfather</option>\r\n              <option value="aunt">Aunt</option>\r\n              <option value="uncle">Uncle</option>\r\n              <option value="cousin">Cousin</option>\r\n              <option value="other">Other</option>\r\n            </select>\r\n          </div>\r\n\r\n          <!-- Condition -->\r\n          <div class="mb-4">\r\n            <label for="condition" class="block text-sm font-medium text-gray-700 mb-1">Medical Condition*</label>\r\n            <div class="relative">\r\n              <input type="text" id="condition"\r\n                class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n                placeholder="e.g. Heart Disease, Diabetes" required>\r\n              <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">\r\n                <i class="fas fa-heartbeat text-gray-400"></i>\r\n              </div>\r\n            </div>\r\n          </div>\r\n\r\n          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">\r\n            <!-- Age at Diagnosis -->\r\n            <div>\r\n              <label for="ageAtDiagnosis" class="block text-sm font-medium text-gray-700 mb-1">Age at Diagnosis</label>\r\n              <div class="relative">\r\n                <input type="number" id="ageAtDiagnosis" min="0" max="120"\r\n                  class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n                  placeholder="Age in years">\r\n                <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">\r\n                  <span class="text-gray-400">yrs</span>\r\n                </div>\r\n              </div>\r\n            </div>\r\n\r\n            <!-- Current Status -->\r\n            <div>\r\n              <label for="status" class="block text-sm font-medium text-gray-700 mb-1">Current Status</label>\r\n              <select id="status"\r\n                class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">\r\n                <option value="">Select status</option>\r\n                <option value="alive_with_condition">Alive with condition</option>\r\n                <option value="alive_no_condition">Alive without condition</option>\r\n                <option value="deceased_with_condition">Deceased with condition</option>\r\n                <option value="deceased_other_cause">Deceased - other cause</option>\r\n                <option value="unknown">Unknown</option>\r\n              </select>\r\n            </div>\r\n          </div>\r\n\r\n          <!-- Age at Death (conditional) -->\r\n          <div class="mb-4 hidden" id="ageAtDeathContainer">\r\n            <label for="ageAtDeath" class="block text-sm font-medium text-gray-700 mb-1">Age at Death</label>\r\n            <div class="relative">\r\n              <input type="number" id="ageAtDeath" min="0" max="120"\r\n                class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n                placeholder="Age in years">\r\n              <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">\r\n                <span class="text-gray-400">yrs</span>\r\n              </div>\r\n            </div>\r\n          </div>\r\n\r\n          <!-- Cause of Death (conditional) -->\r\n          <div class="mb-4 hidden" id="causeOfDeathContainer">\r\n            <label for="causeOfDeath" class="block text-sm font-medium text-gray-700 mb-1">Cause of Death</label>\r\n            <input type="text" id="causeOfDeath"\r\n              class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n              placeholder="If known">\r\n          </div>\r\n\r\n          <!-- Side of Family -->\r\n          <div class="mb-4">\r\n            <label class="block text-sm font-medium text-gray-700 mb-2">Side of Family</label>\r\n            <div class="grid grid-cols-2 gap-3">\r\n              <label class="inline-flex items-center">\r\n                <input type="radio" name="familySide" value="maternal"\r\n                  class="h-4 w-4 text-pink-500 focus:ring-pink-500">\r\n                <span class="ml-2 text-sm text-gray-700">Maternal</span>\r\n              </label>\r\n              <label class="inline-flex items-center">\r\n                <input type="radio" name="familySide" value="paternal"\r\n                  class="h-4 w-4 text-blue-500 focus:ring-blue-500">\r\n                <span class="ml-2 text-sm text-gray-700">Paternal</span>\r\n              </label>\r\n            </div>\r\n          </div>\r\n\r\n          <!-- Notes -->\r\n          <div class="mb-6">\r\n            <label for="notes" class="block text-sm font-medium text-gray-700 mb-1">Additional Notes</label>\r\n            <textarea id="notes" rows="2"\r\n              class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n              placeholder="Any additional details about the condition"></textarea>\r\n          </div>\r\n\r\n          <!-- Form Actions -->\r\n          <hr class="my-4 border-gray-300 dark:border-gray-600" />\r\n          <div class="flex justify-end space-x-3">\r\n            <button type="button"\r\n              class="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">\r\n              Cancel\r\n            </button>\r\n            <button type="submit"\r\n              class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">\r\n              Save Family History\r\n            </button>\r\n          </div>\r\n        </form>\r\n      </div>\r\n    </div>\r\n  </div>\r\n</div>\r\n' }]
+  }], () => [{ type: ShareDataService }], { $NewFamilyHistory: [{
+    type: ViewChild,
+    args: ["newFamilyHistory"]
+  }] });
+})();
+(() => {
+  (typeof ngDevMode === "undefined" || ngDevMode) && \u0275setClassDebugInfo(NewFamilyHistoryComponent, { className: "NewFamilyHistoryComponent", filePath: "src/app/patient/new-family-history/new-family-history.component.ts", lineNumber: 12 });
+})();
+
+// src/app/patient/new-immunization/new-immunization.component.ts
+var _c05 = ["newImmunization"];
+var NewImmunizationComponent = class _NewImmunizationComponent {
+  shareDataService;
+  newImmunization;
+  modalElement;
+  constructor(shareDataService) {
+    this.shareDataService = shareDataService;
+    effect(() => {
+      this.showDialog();
+    });
+  }
+  ngAfterViewInit() {
+    const modalOptions = {
+      placement: "top-center",
+      backdrop: "dynamic",
+      backdropClasses: "bg-gray-900/50 dark:bg-gray-900/80 fixed inset-0 z-40",
+      closable: true,
+      onHide: () => {
+        this.shareDataService.setDilaogName(DialogNameEnum.none);
+      },
+      onShow: () => {
+        console.log("modal is shown");
+      },
+      onToggle: () => {
+        console.log("modal has been toggled");
+      }
+    };
+    const instanceOptions = {
+      id: "modalEl",
+      override: true
+    };
+    this.modalElement = new modal_default(this.newImmunization.nativeElement, modalOptions, instanceOptions);
+  }
+  showDialog() {
+    if (this.shareDataService.getDialogName() === DialogNameEnum.newImmunization) {
+      this.modalElement.show();
+    }
+  }
+  closeModal() {
+    this.modalElement.hide();
+  }
+  static \u0275fac = function NewImmunizationComponent_Factory(__ngFactoryType__) {
+    return new (__ngFactoryType__ || _NewImmunizationComponent)(\u0275\u0275directiveInject(ShareDataService));
+  };
+  static \u0275cmp = /* @__PURE__ */ \u0275\u0275defineComponent({ type: _NewImmunizationComponent, selectors: [["app-new-immunization"]], viewQuery: function NewImmunizationComponent_Query(rf, ctx) {
+    if (rf & 1) {
+      \u0275\u0275viewQuery(_c05, 5);
+    }
+    if (rf & 2) {
+      let _t;
+      \u0275\u0275queryRefresh(_t = \u0275\u0275loadQuery()) && (ctx.newImmunization = _t.first);
+    }
+  }, decls: 84, vars: 0, consts: [["newImmunization", ""], ["id", "modalEl", "tabindex", "-1", "aria-hidden", "true", 1, "fixed", "left-0", "right-0", "top-0", "z-50", "hidden", "h-[calc(100%-1rem)]", "max-h-full", "w-full", "overflow-y-auto", "overflow-x-hidden", "p-4", "md:inset-0"], [1, "relative", "max-h-full", "w-full", "max-w-2xl"], [1, "relative", "rounded-lg", "bg-white", "shadow-sm", "dark:bg-gray-700"], [1, "flex", "space-x-2", "items-center", "text-white", "bg-blue-600", "justify-between", "rounded-t", "border-b", "p-2.5", "dark:border-gray-600"], [1, "fas", "fa-xl", "fa-syringe"], [1, "text-xl", "font-semibold", "lg:text-2xl"], ["type", "button", 1, "ms-auto", "inline-flex", "h-8", "w-8", "items-center", "justify-center", "rounded-lg", "bg-transparent", "text-sm", "text-gray-400", "hover:bg-gray-200", "hover:text-gray-900", "dark:hover:bg-gray-600", "dark:hover:text-white", 3, "click"], ["aria-hidden", "true", "xmlns", "http://www.w3.org/2000/svg", "fill", "none", "viewBox", "0 0 14 14", 1, "h-3", "w-3"], ["stroke", "currentColor", "stroke-linecap", "round", "stroke-linejoin", "round", "stroke-width", "2", "d", "m1 1 6 6m0 0 6 6M7 7l6-6M7 7l-6 6"], [1, "sr-only"], [1, "space-y-6", "p-5"], [1, "mb-4"], ["for", "vaccineName", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], [1, "relative"], ["type", "text", "id", "vaccineName", "placeholder", "e.g. Influenza, MMR", "required", "", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "absolute", "inset-y-0", "right-0", "flex", "items-center", "pr-3", "pointer-events-none"], [1, "fas", "fa-syringe", "text-gray-400"], [1, "grid", "grid-cols-1", "md:grid-cols-2", "gap-4", "mb-4"], ["for", "adminDate", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "date", "id", "adminDate", "required", "", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "fas", "fa-calendar-alt", "text-gray-400"], ["for", "nextDate", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "date", "id", "nextDate", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "fas", "fa-calendar-check", "text-gray-400"], ["for", "vaccineType", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["id", "vaccineType", "required", "", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], ["value", ""], ["value", "routine"], ["value", "travel"], ["value", "seasonal"], ["value", "booster"], ["value", "other"], ["for", "cvxCode", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "text", "id", "cvxCode", "placeholder", "Standard vaccine code", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "fas", "fa-code", "text-gray-400"], ["for", "adminBy", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "text", "id", "adminBy", "placeholder", "Provider name or facility", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], ["for", "lotNumber", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "text", "id", "lotNumber", "placeholder", "Vaccine lot number", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], ["for", "manufacturer", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "text", "id", "manufacturer", "placeholder", "Vaccine manufacturer", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "mb-6"], ["for", "notes", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["id", "notes", "rows", "2", "placeholder", "Any reactions, special circumstances, etc.", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "my-4", "border-gray-300", "dark:border-gray-600"], [1, "flex", "justify-end", "space-x-3"], ["type", "button", 1, "px-4", "py-2", "border", "border-gray-300", "rounded-lg", "text-gray-700", "hover:bg-gray-50", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500"], ["type", "submit", 1, "px-4", "py-2", "bg-blue-600", "text-white", "rounded-lg", "hover:bg-blue-700", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:ring-offset-2"]], template: function NewImmunizationComponent_Template(rf, ctx) {
+    if (rf & 1) {
+      const _r1 = \u0275\u0275getCurrentView();
+      \u0275\u0275elementStart(0, "div", 1, 0)(2, "div", 2)(3, "div", 3)(4, "div", 4)(5, "div");
+      \u0275\u0275element(6, "i", 5);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(7, "div")(8, "h3", 6);
+      \u0275\u0275text(9, " Immunization ");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(10, "button", 7);
+      \u0275\u0275listener("click", function NewImmunizationComponent_Template_button_click_10_listener() {
+        \u0275\u0275restoreView(_r1);
+        return \u0275\u0275resetView(ctx.closeModal());
+      });
+      \u0275\u0275namespaceSVG();
+      \u0275\u0275elementStart(11, "svg", 8);
+      \u0275\u0275element(12, "path", 9);
+      \u0275\u0275elementEnd();
+      \u0275\u0275namespaceHTML();
+      \u0275\u0275elementStart(13, "span", 10);
+      \u0275\u0275text(14, "Close modal");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(15, "div", 11)(16, "form")(17, "div", 12)(18, "label", 13);
+      \u0275\u0275text(19, "Vaccine Name*");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(20, "div", 14);
+      \u0275\u0275element(21, "input", 15);
+      \u0275\u0275elementStart(22, "div", 16);
+      \u0275\u0275element(23, "i", 17);
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(24, "div", 18)(25, "div")(26, "label", 19);
+      \u0275\u0275text(27, "Date Administered*");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(28, "div", 14);
+      \u0275\u0275element(29, "input", 20);
+      \u0275\u0275elementStart(30, "div", 16);
+      \u0275\u0275element(31, "i", 21);
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(32, "div")(33, "label", 22);
+      \u0275\u0275text(34, "Next Due Date");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(35, "div", 14);
+      \u0275\u0275element(36, "input", 23);
+      \u0275\u0275elementStart(37, "div", 16);
+      \u0275\u0275element(38, "i", 24);
+      \u0275\u0275elementEnd()()()();
+      \u0275\u0275elementStart(39, "div", 12)(40, "label", 25);
+      \u0275\u0275text(41, "Vaccine Type*");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(42, "select", 26)(43, "option", 27);
+      \u0275\u0275text(44, "Select type");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(45, "option", 28);
+      \u0275\u0275text(46, "Routine Immunization");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(47, "option", 29);
+      \u0275\u0275text(48, "Travel Vaccine");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(49, "option", 30);
+      \u0275\u0275text(50, "Seasonal (e.g. Flu)");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(51, "option", 31);
+      \u0275\u0275text(52, "Booster Shot");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(53, "option", 32);
+      \u0275\u0275text(54, "Other");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(55, "div", 12)(56, "label", 33);
+      \u0275\u0275text(57, "CVX Code");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(58, "div", 14);
+      \u0275\u0275element(59, "input", 34);
+      \u0275\u0275elementStart(60, "div", 16);
+      \u0275\u0275element(61, "i", 35);
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(62, "div", 12)(63, "label", 36);
+      \u0275\u0275text(64, "Administered By");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(65, "input", 37);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(66, "div", 12)(67, "label", 38);
+      \u0275\u0275text(68, "Lot Number");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(69, "input", 39);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(70, "div", 12)(71, "label", 40);
+      \u0275\u0275text(72, "Manufacturer");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(73, "input", 41);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(74, "div", 42)(75, "label", 43);
+      \u0275\u0275text(76, "Notes");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(77, "textarea", 44);
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(78, "hr", 45);
+      \u0275\u0275elementStart(79, "div", 46)(80, "button", 47);
+      \u0275\u0275text(81, " Cancel ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(82, "button", 48);
+      \u0275\u0275text(83, " Save Immunization ");
+      \u0275\u0275elementEnd()()()()()()();
+    }
+  }, encapsulation: 2 });
+};
+(() => {
+  (typeof ngDevMode === "undefined" || ngDevMode) && setClassMetadata(NewImmunizationComponent, [{
+    type: Component,
+    args: [{ selector: "app-new-immunization", imports: [], template: '<div #newImmunization id="modalEl" tabindex="-1" aria-hidden="true"\r\n  class="fixed left-0 right-0 top-0 z-50 hidden h-[calc(100%-1rem)] max-h-full w-full overflow-y-auto overflow-x-hidden p-4 md:inset-0">\r\n  <div class="relative max-h-full w-full max-w-2xl">\r\n    <!-- Modal content -->\r\n    <div class="relative rounded-lg bg-white shadow-sm dark:bg-gray-700">\r\n      <!-- Modal header -->\r\n      <div\r\n        class="flex space-x-2 items-center text-white bg-blue-600  justify-between rounded-t border-b p-2.5 dark:border-gray-600">\r\n        <div>\r\n          <i class="fas fa-xl fa-syringe"></i>\r\n        </div>\r\n        <div>\r\n          <h3 class="text-xl font-semibold  lg:text-2xl">\r\n            Immunization\r\n          </h3>\r\n        </div>\r\n        <button type="button" (click)="closeModal()"\r\n          class="ms-auto inline-flex h-8 w-8 items-center justify-center rounded-lg bg-transparent text-sm text-gray-400 hover:bg-gray-200 hover:text-gray-900 dark:hover:bg-gray-600 dark:hover:text-white">\r\n          <svg class="h-3 w-3" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 14 14">\r\n            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"\r\n              d="m1 1 6 6m0 0 6 6M7 7l6-6M7 7l-6 6" />\r\n          </svg>\r\n          <span class="sr-only">Close modal</span>\r\n        </button>\r\n      </div>\r\n      <!-- Modal body -->\r\n      <div class="space-y-6 p-5">\r\n\r\n\r\n        <form>\r\n          <!-- Vaccine Name -->\r\n          <div class="mb-4">\r\n            <label for="vaccineName" class="block text-sm font-medium text-gray-700 mb-1">Vaccine Name*</label>\r\n            <div class="relative">\r\n              <input type="text" id="vaccineName"\r\n                class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n                placeholder="e.g. Influenza, MMR" required>\r\n              <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">\r\n                <i class="fas fa-syringe text-gray-400"></i>\r\n              </div>\r\n            </div>\r\n          </div>\r\n\r\n          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">\r\n            <!-- Administration Date -->\r\n            <div>\r\n              <label for="adminDate" class="block text-sm font-medium text-gray-700 mb-1">Date Administered*</label>\r\n              <div class="relative">\r\n                <input type="date" id="adminDate"\r\n                  class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n                  required>\r\n                <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">\r\n                  <i class="fas fa-calendar-alt text-gray-400"></i>\r\n                </div>\r\n              </div>\r\n            </div>\r\n\r\n            <!-- Next Due Date -->\r\n            <div>\r\n              <label for="nextDate" class="block text-sm font-medium text-gray-700 mb-1">Next Due Date</label>\r\n              <div class="relative">\r\n                <input type="date" id="nextDate"\r\n                  class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">\r\n                <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">\r\n                  <i class="fas fa-calendar-check text-gray-400"></i>\r\n                </div>\r\n              </div>\r\n            </div>\r\n          </div>\r\n\r\n          <!-- Vaccine Type -->\r\n          <div class="mb-4">\r\n            <label for="vaccineType" class="block text-sm font-medium text-gray-700 mb-1">Vaccine Type*</label>\r\n            <select id="vaccineType"\r\n              class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n              required>\r\n              <option value="">Select type</option>\r\n              <option value="routine">Routine Immunization</option>\r\n              <option value="travel">Travel Vaccine</option>\r\n              <option value="seasonal">Seasonal (e.g. Flu)</option>\r\n              <option value="booster">Booster Shot</option>\r\n              <option value="other">Other</option>\r\n            </select>\r\n          </div>\r\n\r\n          <!-- CVX Code -->\r\n          <div class="mb-4">\r\n            <label for="cvxCode" class="block text-sm font-medium text-gray-700 mb-1">CVX Code</label>\r\n            <div class="relative">\r\n              <input type="text" id="cvxCode"\r\n                class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n                placeholder="Standard vaccine code">\r\n              <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">\r\n                <i class="fas fa-code text-gray-400"></i>\r\n              </div>\r\n            </div>\r\n          </div>\r\n\r\n          <!-- Administered By -->\r\n          <div class="mb-4">\r\n            <label for="adminBy" class="block text-sm font-medium text-gray-700 mb-1">Administered By</label>\r\n            <input type="text" id="adminBy"\r\n              class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n              placeholder="Provider name or facility">\r\n          </div>\r\n\r\n          <!-- Lot Number -->\r\n          <div class="mb-4">\r\n            <label for="lotNumber" class="block text-sm font-medium text-gray-700 mb-1">Lot Number</label>\r\n            <input type="text" id="lotNumber"\r\n              class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n              placeholder="Vaccine lot number">\r\n          </div>\r\n\r\n          <!-- Manufacturer -->\r\n          <div class="mb-4">\r\n            <label for="manufacturer" class="block text-sm font-medium text-gray-700 mb-1">Manufacturer</label>\r\n            <input type="text" id="manufacturer"\r\n              class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n              placeholder="Vaccine manufacturer">\r\n          </div>\r\n\r\n          <!-- Notes -->\r\n          <div class="mb-6">\r\n            <label for="notes" class="block text-sm font-medium text-gray-700 mb-1">Notes</label>\r\n            <textarea id="notes" rows="2"\r\n              class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n              placeholder="Any reactions, special circumstances, etc."></textarea>\r\n          </div>\r\n\r\n          <!-- Form Actions -->\r\n          <hr class="my-4 border-gray-300 dark:border-gray-600" />\r\n          <div class="flex justify-end space-x-3">\r\n            <button type="button"\r\n              class="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">\r\n              Cancel\r\n            </button>\r\n            <button type="submit"\r\n              class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">\r\n              Save Immunization\r\n            </button>\r\n          </div>\r\n        </form>\r\n\r\n      </div>\r\n    </div>\r\n  </div>\r\n' }]
+  }], () => [{ type: ShareDataService }], { newImmunization: [{
+    type: ViewChild,
+    args: ["newImmunization"]
+  }] });
+})();
+(() => {
+  (typeof ngDevMode === "undefined" || ngDevMode) && \u0275setClassDebugInfo(NewImmunizationComponent, { className: "NewImmunizationComponent", filePath: "src/app/patient/new-immunization/new-immunization.component.ts", lineNumber: 12 });
+})();
+
+// src/app/patient/new-medical-condition/new-medical-condition.component.ts
+var _c06 = ["newMedicalCondition"];
+var NewMedicalConditionComponent = class _NewMedicalConditionComponent {
+  shareDataService;
+  $NewMedicalCondition;
+  modalElement;
+  constructor(shareDataService) {
+    this.shareDataService = shareDataService;
+    effect(() => {
+      this.showDialog();
+    });
+  }
+  ngAfterViewInit() {
+    const modalOptions = {
+      placement: "top-center",
+      backdrop: "dynamic",
+      backdropClasses: "bg-gray-900/50 dark:bg-gray-900/80 fixed inset-0 z-40",
+      closable: true,
+      onHide: () => {
+        this.shareDataService.setDilaogName(DialogNameEnum.none);
+      },
+      onShow: () => {
+        console.log("modal is shown");
+      },
+      onToggle: () => {
+        console.log("modal has been toggled");
+      }
+    };
+    const instanceOptions = {
+      id: "modalEl",
+      override: true
+    };
+    this.modalElement = new modal_default(this.$NewMedicalCondition.nativeElement, modalOptions, instanceOptions);
+  }
+  closeModal() {
+    this.modalElement.hide();
+  }
+  showDialog() {
+    if (this.shareDataService.getDialogName() === DialogNameEnum.newMedicalCondition) {
+      this.modalElement.show();
+    }
+  }
+  static \u0275fac = function NewMedicalConditionComponent_Factory(__ngFactoryType__) {
+    return new (__ngFactoryType__ || _NewMedicalConditionComponent)(\u0275\u0275directiveInject(ShareDataService));
+  };
+  static \u0275cmp = /* @__PURE__ */ \u0275\u0275defineComponent({ type: _NewMedicalConditionComponent, selectors: [["app-new-medical-condition"]], viewQuery: function NewMedicalConditionComponent_Query(rf, ctx) {
+    if (rf & 1) {
+      \u0275\u0275viewQuery(_c06, 5);
+    }
+    if (rf & 2) {
+      let _t;
+      \u0275\u0275queryRefresh(_t = \u0275\u0275loadQuery()) && (ctx.$NewMedicalCondition = _t.first);
+    }
+  }, decls: 115, vars: 0, consts: [["newMedicalCondition", ""], ["id", "modalEl", "tabindex", "-1", "aria-hidden", "true", 1, "fixed", "left-0", "right-0", "top-0", "z-50", "hidden", "h-[calc(100%-1rem)]", "max-h-full", "w-full", "overflow-y-auto", "overflow-x-hidden", "p-4", "md:inset-0"], [1, "relative", "max-h-full", "w-full", "max-w-2xl"], [1, "relative", "rounded-lg", "bg-white", "shadow-sm", "dark:bg-gray-700"], [1, "flex", "space-x-2", "items-center", "text-white", "bg-blue-600", "justify-between", "rounded-t", "border-b", "p-2.5", "dark:border-gray-600"], [1, "fas", "fa-xl", "fa-syringe"], [1, "text-xl", "font-semibold", "lg:text-2xl"], ["type", "button", 1, "ms-auto", "inline-flex", "h-8", "w-8", "items-center", "justify-center", "rounded-lg", "bg-transparent", "text-sm", "text-gray-400", "hover:bg-gray-200", "hover:text-gray-900", "dark:hover:bg-gray-600", "dark:hover:text-white", 3, "click"], ["aria-hidden", "true", "xmlns", "http://www.w3.org/2000/svg", "fill", "none", "viewBox", "0 0 14 14", 1, "h-3", "w-3"], ["stroke", "currentColor", "stroke-linecap", "round", "stroke-linejoin", "round", "stroke-width", "2", "d", "m1 1 6 6m0 0 6 6M7 7l6-6M7 7l-6 6"], [1, "sr-only"], [1, "p-6"], [1, "grid", "grid-cols-1", "md:grid-cols-2", "gap-6"], [1, "mb-4"], ["for", "conditionName", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], [1, "relative"], ["type", "text", "id", "conditionName", "placeholder", "e.g. Diabetes, Hypertension", "required", "", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "absolute", "inset-y-0", "right-0", "flex", "items-center", "pr-3", "pointer-events-none"], [1, "fas", "fa-disease", "text-gray-400"], ["for", "diagnosisDate", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "date", "id", "diagnosisDate", "required", "", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "fas", "fa-calendar-alt", "text-gray-400"], ["for", "physician", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "text", "id", "physician", "placeholder", "Dr. Smith", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], ["for", "conditionType", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["id", "conditionType", "required", "", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], ["value", ""], ["value", "acute"], ["value", "chronic"], ["value", "congenital"], ["value", "hereditary"], ["value", "other"], [1, "block", "text-sm", "font-medium", "text-gray-700", "mb-2"], [1, "grid", "grid-cols-3", "gap-3"], [1, "inline-flex", "items-center"], ["type", "radio", "name", "severity", "value", "mild", 1, "h-4", "w-4", "text-blue-600", "focus:ring-blue-500"], [1, "ml-2", "text-sm", "text-gray-700"], ["type", "radio", "name", "severity", "value", "moderate", "checked", "", 1, "h-4", "w-4", "text-yellow-500", "focus:ring-yellow-500"], ["type", "radio", "name", "severity", "value", "severe", 1, "h-4", "w-4", "text-red-600", "focus:ring-red-500"], [1, "grid", "grid-cols-2", "gap-3"], ["type", "radio", "name", "status", "value", "active", "checked", "", 1, "h-4", "w-4", "text-blue-600", "focus:ring-blue-500"], ["type", "radio", "name", "status", "value", "resolved", 1, "h-4", "w-4", "text-green-600", "focus:ring-green-500"], ["type", "radio", "name", "status", "value", "managed", 1, "h-4", "w-4", "text-purple-600", "focus:ring-purple-500"], ["type", "radio", "name", "status", "value", "monitored", 1, "h-4", "w-4", "text-cyan-600", "focus:ring-cyan-500"], ["for", "icdCode", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "text", "id", "icdCode", "placeholder", "e.g. E11.65", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "fas", "fa-barcode", "text-gray-400"], ["for", "description", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["id", "description", "rows", "3", "placeholder", "Describe the condition, symptoms, etc.", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "mb-6"], ["for", "treatment", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["id", "treatment", "rows", "3", "placeholder", "Current treatment approach, medications, therapies, etc.", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "flex", "justify-end", "space-x-3"], ["type", "button", 1, "px-4", "py-2", "border", "border-gray-300", "rounded-lg", "text-gray-700", "hover:bg-gray-50", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500"], ["type", "submit", 1, "px-4", "py-2", "bg-blue-600", "text-white", "rounded-lg", "hover:bg-blue-700", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:ring-offset-2"], [1, "flex", "items-center", "space-x-2", "rtl:space-x-reverse", "rounded-b", "border-t", "border-gray-200", "p-6", "dark:border-gray-600"], ["type", "button", 1, "rounded-lg", "bg-blue-700", "px-5", "py-2.5", "text-center", "text-sm", "font-medium", "text-white", "hover:bg-blue-800", "focus:outline-none", "focus:ring-4", "focus:ring-blue-300", "dark:bg-blue-600", "dark:hover:bg-blue-700", "dark:focus:ring-blue-800"], ["type", "button", 1, "rounded-lg", "border", "border-gray-200", "bg-white", "px-5", "py-2.5", "text-sm", "font-medium", "text-gray-500", "hover:bg-gray-100", "hover:text-gray-900", "focus:z-10", "focus:outline-none", "focus:ring-4", "focus:ring-blue-300", "dark:border-gray-500", "dark:bg-gray-700", "dark:text-gray-300", "dark:hover:bg-gray-600", "dark:hover:text-white"]], template: function NewMedicalConditionComponent_Template(rf, ctx) {
+    if (rf & 1) {
+      const _r1 = \u0275\u0275getCurrentView();
+      \u0275\u0275elementStart(0, "div", 1, 0)(2, "div", 2)(3, "div", 3)(4, "div", 4)(5, "div");
+      \u0275\u0275element(6, "i", 5);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(7, "div")(8, "h3", 6);
+      \u0275\u0275text(9, " Medical Condition ");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(10, "button", 7);
+      \u0275\u0275listener("click", function NewMedicalConditionComponent_Template_button_click_10_listener() {
+        \u0275\u0275restoreView(_r1);
+        return \u0275\u0275resetView(ctx.closeModal());
+      });
+      \u0275\u0275namespaceSVG();
+      \u0275\u0275elementStart(11, "svg", 8);
+      \u0275\u0275element(12, "path", 9);
+      \u0275\u0275elementEnd();
+      \u0275\u0275namespaceHTML();
+      \u0275\u0275elementStart(13, "span", 10);
+      \u0275\u0275text(14, "Close modal");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(15, "div", 11)(16, "form")(17, "div", 12)(18, "div")(19, "div", 13)(20, "label", 14);
+      \u0275\u0275text(21, "Condition Name*");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(22, "div", 15);
+      \u0275\u0275element(23, "input", 16);
+      \u0275\u0275elementStart(24, "div", 17);
+      \u0275\u0275element(25, "i", 18);
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(26, "div", 13)(27, "label", 19);
+      \u0275\u0275text(28, "Diagnosis Date*");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(29, "div", 15);
+      \u0275\u0275element(30, "input", 20);
+      \u0275\u0275elementStart(31, "div", 17);
+      \u0275\u0275element(32, "i", 21);
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(33, "div", 13)(34, "label", 22);
+      \u0275\u0275text(35, "Diagnosing Physician");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(36, "input", 23);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(37, "div", 13)(38, "label", 24);
+      \u0275\u0275text(39, "Condition Type*");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(40, "select", 25)(41, "option", 26);
+      \u0275\u0275text(42, "Select type");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(43, "option", 27);
+      \u0275\u0275text(44, "Acute");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(45, "option", 28);
+      \u0275\u0275text(46, "Chronic");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(47, "option", 29);
+      \u0275\u0275text(48, "Congenital");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(49, "option", 30);
+      \u0275\u0275text(50, "Hereditary");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(51, "option", 31);
+      \u0275\u0275text(52, "Other");
+      \u0275\u0275elementEnd()()()();
+      \u0275\u0275elementStart(53, "div")(54, "div", 13)(55, "label", 32);
+      \u0275\u0275text(56, "Severity*");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(57, "div", 33)(58, "label", 34);
+      \u0275\u0275element(59, "input", 35);
+      \u0275\u0275elementStart(60, "span", 36);
+      \u0275\u0275text(61, "Mild");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(62, "label", 34);
+      \u0275\u0275element(63, "input", 37);
+      \u0275\u0275elementStart(64, "span", 36);
+      \u0275\u0275text(65, "Moderate");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(66, "label", 34);
+      \u0275\u0275element(67, "input", 38);
+      \u0275\u0275elementStart(68, "span", 36);
+      \u0275\u0275text(69, "Severe");
+      \u0275\u0275elementEnd()()()();
+      \u0275\u0275elementStart(70, "div", 13)(71, "label", 32);
+      \u0275\u0275text(72, "Current Status*");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(73, "div", 39)(74, "label", 34);
+      \u0275\u0275element(75, "input", 40);
+      \u0275\u0275elementStart(76, "span", 36);
+      \u0275\u0275text(77, "Active");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(78, "label", 34);
+      \u0275\u0275element(79, "input", 41);
+      \u0275\u0275elementStart(80, "span", 36);
+      \u0275\u0275text(81, "Resolved");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(82, "label", 34);
+      \u0275\u0275element(83, "input", 42);
+      \u0275\u0275elementStart(84, "span", 36);
+      \u0275\u0275text(85, "Managed");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(86, "label", 34);
+      \u0275\u0275element(87, "input", 43);
+      \u0275\u0275elementStart(88, "span", 36);
+      \u0275\u0275text(89, "Monitored");
+      \u0275\u0275elementEnd()()()();
+      \u0275\u0275elementStart(90, "div", 13)(91, "label", 44);
+      \u0275\u0275text(92, "ICD-10 Code");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(93, "div", 15);
+      \u0275\u0275element(94, "input", 45);
+      \u0275\u0275elementStart(95, "div", 17);
+      \u0275\u0275element(96, "i", 46);
+      \u0275\u0275elementEnd()()()()();
+      \u0275\u0275elementStart(97, "div", 13)(98, "label", 47);
+      \u0275\u0275text(99, "Description");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(100, "textarea", 48);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(101, "div", 49)(102, "label", 50);
+      \u0275\u0275text(103, "Treatment Plan");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(104, "textarea", 51);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(105, "div", 52)(106, "button", 53);
+      \u0275\u0275text(107, " Cancel ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(108, "button", 54);
+      \u0275\u0275text(109, " Save Condition ");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(110, "div", 55)(111, "button", 56);
+      \u0275\u0275text(112, " I accept ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(113, "button", 57);
+      \u0275\u0275text(114, " Decline ");
+      \u0275\u0275elementEnd()()()()()();
+    }
+  }, encapsulation: 2 });
+};
+(() => {
+  (typeof ngDevMode === "undefined" || ngDevMode) && setClassMetadata(NewMedicalConditionComponent, [{
+    type: Component,
+    args: [{ selector: "app-new-medical-condition", imports: [], template: '<div #newMedicalCondition id="modalEl" tabindex="-1" aria-hidden="true"\r\n  class="fixed left-0 right-0 top-0 z-50 hidden h-[calc(100%-1rem)] max-h-full w-full overflow-y-auto overflow-x-hidden p-4 md:inset-0">\r\n  <div class="relative max-h-full w-full max-w-2xl">\r\n    <!-- Modal content -->\r\n    <div class="relative rounded-lg bg-white shadow-sm dark:bg-gray-700">\r\n      <!-- Modal header -->\r\n      <div\r\n        class="flex space-x-2 items-center text-white bg-blue-600  justify-between rounded-t border-b p-2.5 dark:border-gray-600">\r\n        <div>\r\n          <i class="fas fa-xl fa-syringe"></i>\r\n        </div>\r\n        <div>\r\n          <h3 class="text-xl font-semibold  lg:text-2xl">\r\n            Medical Condition\r\n          </h3>\r\n        </div>\r\n        <button type="button" (click)="closeModal()"\r\n          class="ms-auto inline-flex h-8 w-8 items-center justify-center rounded-lg bg-transparent text-sm text-gray-400 hover:bg-gray-200 hover:text-gray-900 dark:hover:bg-gray-600 dark:hover:text-white">\r\n          <svg class="h-3 w-3" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 14 14">\r\n            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"\r\n              d="m1 1 6 6m0 0 6 6M7 7l6-6M7 7l-6 6" />\r\n          </svg>\r\n          <span class="sr-only">Close modal</span>\r\n        </button>\r\n      </div>\r\n\r\n      <!-- Form Content -->\r\n      <div class="p-6">\r\n        <form>\r\n          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">\r\n            <!-- Left Column -->\r\n            <div>\r\n              <!-- Condition Name -->\r\n              <div class="mb-4">\r\n                <label for="conditionName" class="block text-sm font-medium text-gray-700 mb-1">Condition Name*</label>\r\n                <div class="relative">\r\n                  <input type="text" id="conditionName"\r\n                    class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n                    placeholder="e.g. Diabetes, Hypertension" required>\r\n                  <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">\r\n                    <i class="fas fa-disease text-gray-400"></i>\r\n                  </div>\r\n                </div>\r\n              </div>\r\n\r\n              <!-- Diagnosis Date -->\r\n              <div class="mb-4">\r\n                <label for="diagnosisDate" class="block text-sm font-medium text-gray-700 mb-1">Diagnosis Date*</label>\r\n                <div class="relative">\r\n                  <input type="date" id="diagnosisDate"\r\n                    class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n                    required>\r\n                  <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">\r\n                    <i class="fas fa-calendar-alt text-gray-400"></i>\r\n                  </div>\r\n                </div>\r\n              </div>\r\n\r\n              <!-- Diagnosing Physician -->\r\n              <div class="mb-4">\r\n                <label for="physician" class="block text-sm font-medium text-gray-700 mb-1">Diagnosing Physician</label>\r\n                <input type="text" id="physician"\r\n                  class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n                  placeholder="Dr. Smith">\r\n              </div>\r\n\r\n              <!-- Condition Type -->\r\n              <div class="mb-4">\r\n                <label for="conditionType" class="block text-sm font-medium text-gray-700 mb-1">Condition Type*</label>\r\n                <select id="conditionType"\r\n                  class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n                  required>\r\n                  <option value="">Select type</option>\r\n                  <option value="acute">Acute</option>\r\n                  <option value="chronic">Chronic</option>\r\n                  <option value="congenital">Congenital</option>\r\n                  <option value="hereditary">Hereditary</option>\r\n                  <option value="other">Other</option>\r\n                </select>\r\n              </div>\r\n            </div>\r\n\r\n            <!-- Right Column -->\r\n            <div>\r\n              <!-- Severity -->\r\n              <div class="mb-4">\r\n                <label class="block text-sm font-medium text-gray-700 mb-2">Severity*</label>\r\n                <div class="grid grid-cols-3 gap-3">\r\n                  <label class="inline-flex items-center">\r\n                    <input type="radio" name="severity" value="mild" class="h-4 w-4 text-blue-600 focus:ring-blue-500">\r\n                    <span class="ml-2 text-sm text-gray-700">Mild</span>\r\n                  </label>\r\n                  <label class="inline-flex items-center">\r\n                    <input type="radio" name="severity" value="moderate"\r\n                      class="h-4 w-4 text-yellow-500 focus:ring-yellow-500" checked>\r\n                    <span class="ml-2 text-sm text-gray-700">Moderate</span>\r\n                  </label>\r\n                  <label class="inline-flex items-center">\r\n                    <input type="radio" name="severity" value="severe" class="h-4 w-4 text-red-600 focus:ring-red-500">\r\n                    <span class="ml-2 text-sm text-gray-700">Severe</span>\r\n                  </label>\r\n                </div>\r\n              </div>\r\n\r\n              <!-- Current Status -->\r\n              <div class="mb-4">\r\n                <label class="block text-sm font-medium text-gray-700 mb-2">Current Status*</label>\r\n                <div class="grid grid-cols-2 gap-3">\r\n                  <label class="inline-flex items-center">\r\n                    <input type="radio" name="status" value="active" class="h-4 w-4 text-blue-600 focus:ring-blue-500"\r\n                      checked>\r\n                    <span class="ml-2 text-sm text-gray-700">Active</span>\r\n                  </label>\r\n                  <label class="inline-flex items-center">\r\n                    <input type="radio" name="status" value="resolved"\r\n                      class="h-4 w-4 text-green-600 focus:ring-green-500">\r\n                    <span class="ml-2 text-sm text-gray-700">Resolved</span>\r\n                  </label>\r\n                  <label class="inline-flex items-center">\r\n                    <input type="radio" name="status" value="managed"\r\n                      class="h-4 w-4 text-purple-600 focus:ring-purple-500">\r\n                    <span class="ml-2 text-sm text-gray-700">Managed</span>\r\n                  </label>\r\n                  <label class="inline-flex items-center">\r\n                    <input type="radio" name="status" value="monitored"\r\n                      class="h-4 w-4 text-cyan-600 focus:ring-cyan-500">\r\n                    <span class="ml-2 text-sm text-gray-700">Monitored</span>\r\n                  </label>\r\n                </div>\r\n              </div>\r\n\r\n              <!-- ICD Code -->\r\n              <div class="mb-4">\r\n                <label for="icdCode" class="block text-sm font-medium text-gray-700 mb-1">ICD-10 Code</label>\r\n                <div class="relative">\r\n                  <input type="text" id="icdCode"\r\n                    class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n                    placeholder="e.g. E11.65">\r\n                  <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">\r\n                    <i class="fas fa-barcode text-gray-400"></i>\r\n                  </div>\r\n                </div>\r\n              </div>\r\n            </div>\r\n          </div>\r\n\r\n          <!-- Description -->\r\n          <div class="mb-4">\r\n            <label for="description" class="block text-sm font-medium text-gray-700 mb-1">Description</label>\r\n            <textarea id="description" rows="3"\r\n              class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n              placeholder="Describe the condition, symptoms, etc."></textarea>\r\n          </div>\r\n\r\n          <!-- Treatment Plan -->\r\n          <div class="mb-6">\r\n            <label for="treatment" class="block text-sm font-medium text-gray-700 mb-1">Treatment Plan</label>\r\n            <textarea id="treatment" rows="3"\r\n              class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n              placeholder="Current treatment approach, medications, therapies, etc."></textarea>\r\n          </div>\r\n\r\n          <!-- Form Actions -->\r\n          <div class="flex justify-end space-x-3">\r\n            <button type="button"\r\n              class="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">\r\n              Cancel\r\n            </button>\r\n            <button type="submit"\r\n              class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">\r\n              Save Condition\r\n            </button>\r\n          </div>\r\n        </form>\r\n\r\n        <div\r\n          class="flex items-center space-x-2 rtl:space-x-reverse rounded-b border-t border-gray-200 p-6 dark:border-gray-600">\r\n          <button type="button"\r\n            class="rounded-lg bg-blue-700 px-5 py-2.5 text-center text-sm font-medium text-white hover:bg-blue-800 focus:outline-none focus:ring-4 focus:ring-blue-300 dark:bg-blue-600 dark:hover:bg-blue-700 dark:focus:ring-blue-800">\r\n            I accept\r\n          </button>\r\n          <button type="button"\r\n            class="rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-900 focus:z-10 focus:outline-none focus:ring-4 focus:ring-blue-300 dark:border-gray-500 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 dark:hover:text-white">\r\n            Decline\r\n          </button>\r\n        </div>\r\n      </div>\r\n    </div>\r\n  </div>\r\n' }]
+  }], () => [{ type: ShareDataService }], { $NewMedicalCondition: [{
+    type: ViewChild,
+    args: ["newMedicalCondition"]
+  }] });
+})();
+(() => {
+  (typeof ngDevMode === "undefined" || ngDevMode) && \u0275setClassDebugInfo(NewMedicalConditionComponent, { className: "NewMedicalConditionComponent", filePath: "src/app/patient/new-medical-condition/new-medical-condition.component.ts", lineNumber: 12 });
+})();
+
+// src/app/patient/new-vital-statistic/new-vital-statistic.component.ts
+var _c07 = ["newVitalStatistic"];
+var NewVitalStatisticComponent = class _NewVitalStatisticComponent {
+  shareDataService;
+  newVitalStatistic;
+  modalElement;
+  constructor(shareDataService) {
+    this.shareDataService = shareDataService;
+    effect(() => {
+      this.showDialog();
+    });
+  }
+  ngAfterViewInit() {
+    const modalOptions = {
+      placement: "top-center",
+      backdrop: "dynamic",
+      backdropClasses: "bg-gray-900/50 dark:bg-gray-900/80 fixed inset-0 z-40",
+      closable: true,
+      onHide: () => {
+        this.shareDataService.setDilaogName(DialogNameEnum.none);
+      },
+      onShow: () => {
+        console.log("modal is shown");
+      },
+      onToggle: () => {
+        console.log("modal has been toggled");
+      }
+    };
+    const instanceOptions = {
+      id: "modalEl",
+      override: true
+    };
+    this.modalElement = new modal_default(this.newVitalStatistic.nativeElement, modalOptions, instanceOptions);
+  }
+  showDialog() {
+    if (this.shareDataService.getDialogName() == DialogNameEnum.newVitalStatistic) {
+      this.modalElement.show();
+    }
+  }
+  closeModal() {
+    this.modalElement.hide();
+  }
+  static \u0275fac = function NewVitalStatisticComponent_Factory(__ngFactoryType__) {
+    return new (__ngFactoryType__ || _NewVitalStatisticComponent)(\u0275\u0275directiveInject(ShareDataService));
+  };
+  static \u0275cmp = /* @__PURE__ */ \u0275\u0275defineComponent({ type: _NewVitalStatisticComponent, selectors: [["app-new-vital-statistic"]], viewQuery: function NewVitalStatisticComponent_Query(rf, ctx) {
+    if (rf & 1) {
+      \u0275\u0275viewQuery(_c07, 5);
+    }
+    if (rf & 2) {
+      let _t;
+      \u0275\u0275queryRefresh(_t = \u0275\u0275loadQuery()) && (ctx.newVitalStatistic = _t.first);
+    }
+  }, decls: 109, vars: 0, consts: [["newVitalStatistic", ""], ["id", "modalEl", "tabindex", "-1", "aria-hidden", "true", 1, "fixed", "left-0", "right-0", "top-0", "z-50", "hidden", "h-[calc(100%-1rem)]", "max-h-full", "w-full", "overflow-y-auto", "overflow-x-hidden", "p-4", "md:inset-0"], [1, "relative", "max-h-full", "w-full", "max-w-2xl"], [1, "relative", "rounded-lg", "bg-white", "shadow-sm", "dark:bg-gray-700"], [1, "flex", "space-x-2", "items-center", "text-white", "bg-blue-600", "justify-between", "rounded-t", "border-b", "p-2.5", "dark:border-gray-600"], [1, "fas", "fa-xl", "fa-heart-pulse"], [1, "text-xl", "font-semibold", "lg:text-2xl"], ["type", "button", 1, "ms-auto", "inline-flex", "h-8", "w-8", "items-center", "justify-center", "rounded-lg", "bg-transparent", "text-sm", "text-gray-400", "hover:bg-gray-200", "hover:text-gray-900", "dark:hover:bg-gray-600", "dark:hover:text-white", 3, "click"], ["aria-hidden", "true", "xmlns", "http://www.w3.org/2000/svg", "fill", "none", "viewBox", "0 0 14 14", 1, "h-3", "w-3"], ["stroke", "currentColor", "stroke-linecap", "round", "stroke-linejoin", "round", "stroke-width", "2", "d", "m1 1 6 6m0 0 6 6M7 7l6-6M7 7l-6 6"], [1, "sr-only"], [1, "space-y-6", "p-5"], [1, "p-6"], [1, "mb-4"], ["for", "recordDateTime", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], [1, "relative"], ["type", "datetime-local", "id", "recordDateTime", "required", "", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "absolute", "inset-y-0", "right-0", "flex", "items-center", "pr-3", "pointer-events-none"], [1, "fas", "fa-clock", "text-gray-400"], [1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], [1, "grid", "grid-cols-3", "gap-2"], ["type", "number", "id", "systolic", "min", "40", "max", "300", "placeholder", "Systolic", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "text-xs", "text-gray-400"], [1, "flex", "items-center", "justify-center"], [1, "text-gray-400"], ["type", "number", "id", "diastolic", "min", "20", "max", "200", "placeholder", "Diastolic", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "grid", "grid-cols-1", "md:grid-cols-2", "gap-4", "mb-4"], ["for", "heartRate", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "number", "id", "heartRate", "min", "20", "max", "250", "placeholder", "BPM", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "fas", "fa-heartbeat", "text-gray-400"], ["for", "respiratoryRate", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "number", "id", "respiratoryRate", "min", "5", "max", "60", "placeholder", "Breaths/min", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "fas", "fa-lungs", "text-gray-400"], ["for", "temperature", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "number", "id", "temperature", "min", "30", "max", "43", "step", "0.1", "placeholder", "\xB0C", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], ["for", "oxygenSaturation", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "number", "id", "oxygenSaturation", "min", "50", "max", "100", "placeholder", "%", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], ["for", "height", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "number", "id", "height", "min", "30", "max", "250", "step", "0.1", "placeholder", "cm", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], ["for", "weight", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "number", "id", "weight", "min", "1", "max", "300", "step", "0.1", "placeholder", "kg", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "mb-4", "bg-blue-50", "p-3", "rounded-lg"], [1, "flex", "justify-between", "items-center"], [1, "text-sm", "font-medium", "text-gray-700"], ["id", "bmiResult", 1, "text-lg", "font-bold", "text-blue-700"], ["id", "bmiCategory", 1, "text-xs", "text-gray-500", "mt-1"], [1, "mb-6"], ["for", "notes", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["id", "notes", "rows", "2", "placeholder", "Any additional observations", 1, "w-full", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "my-4", "border-gray-300", "dark:border-gray-600"], [1, "flex", "justify-end", "space-x-3"], ["type", "button", 1, "px-4", "py-2", "border", "border-gray-300", "rounded-lg", "text-gray-700", "hover:bg-gray-50", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500"], ["type", "submit", 1, "px-4", "py-2", "bg-blue-600", "text-white", "rounded-lg", "hover:bg-blue-700", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:ring-offset-2"]], template: function NewVitalStatisticComponent_Template(rf, ctx) {
+    if (rf & 1) {
+      const _r1 = \u0275\u0275getCurrentView();
+      \u0275\u0275elementStart(0, "div", 1, 0)(2, "div", 2)(3, "div", 3)(4, "div", 4)(5, "div");
+      \u0275\u0275element(6, "i", 5);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(7, "div")(8, "h3", 6);
+      \u0275\u0275text(9, " Record Vital Signs ");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(10, "button", 7);
+      \u0275\u0275listener("click", function NewVitalStatisticComponent_Template_button_click_10_listener() {
+        \u0275\u0275restoreView(_r1);
+        return \u0275\u0275resetView(ctx.closeModal());
+      });
+      \u0275\u0275namespaceSVG();
+      \u0275\u0275elementStart(11, "svg", 8);
+      \u0275\u0275element(12, "path", 9);
+      \u0275\u0275elementEnd();
+      \u0275\u0275namespaceHTML();
+      \u0275\u0275elementStart(13, "span", 10);
+      \u0275\u0275text(14, "Close modal");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(15, "div", 11)(16, "div", 12)(17, "form")(18, "div", 13)(19, "label", 14);
+      \u0275\u0275text(20, "Date & Time*");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(21, "div", 15);
+      \u0275\u0275element(22, "input", 16);
+      \u0275\u0275elementStart(23, "div", 17);
+      \u0275\u0275element(24, "i", 18);
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(25, "div", 13)(26, "label", 19);
+      \u0275\u0275text(27, "Blood Pressure");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(28, "div", 20)(29, "div", 15);
+      \u0275\u0275element(30, "input", 21);
+      \u0275\u0275elementStart(31, "div", 17)(32, "span", 22);
+      \u0275\u0275text(33, "mmHg");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(34, "div", 23)(35, "span", 24);
+      \u0275\u0275text(36, "/");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(37, "div", 15);
+      \u0275\u0275element(38, "input", 25);
+      \u0275\u0275elementStart(39, "div", 17)(40, "span", 22);
+      \u0275\u0275text(41, "mmHg");
+      \u0275\u0275elementEnd()()()()();
+      \u0275\u0275elementStart(42, "div", 26)(43, "div")(44, "label", 27);
+      \u0275\u0275text(45, "Heart Rate");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(46, "div", 15);
+      \u0275\u0275element(47, "input", 28);
+      \u0275\u0275elementStart(48, "div", 17);
+      \u0275\u0275element(49, "i", 29);
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(50, "div")(51, "label", 30);
+      \u0275\u0275text(52, "Respiratory Rate");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(53, "div", 15);
+      \u0275\u0275element(54, "input", 31);
+      \u0275\u0275elementStart(55, "div", 17);
+      \u0275\u0275element(56, "i", 32);
+      \u0275\u0275elementEnd()()()();
+      \u0275\u0275elementStart(57, "div", 26)(58, "div")(59, "label", 33);
+      \u0275\u0275text(60, "Temperature");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(61, "div", 15);
+      \u0275\u0275element(62, "input", 34);
+      \u0275\u0275elementStart(63, "div", 17)(64, "span", 24);
+      \u0275\u0275text(65, "\xB0C");
+      \u0275\u0275elementEnd()()()();
+      \u0275\u0275elementStart(66, "div")(67, "label", 35);
+      \u0275\u0275text(68, "SpO\u2082");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(69, "div", 15);
+      \u0275\u0275element(70, "input", 36);
+      \u0275\u0275elementStart(71, "div", 17)(72, "span", 24);
+      \u0275\u0275text(73, "%");
+      \u0275\u0275elementEnd()()()()();
+      \u0275\u0275elementStart(74, "div", 26)(75, "div")(76, "label", 37);
+      \u0275\u0275text(77, "Height");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(78, "div", 15);
+      \u0275\u0275element(79, "input", 38);
+      \u0275\u0275elementStart(80, "div", 17)(81, "span", 24);
+      \u0275\u0275text(82, "cm");
+      \u0275\u0275elementEnd()()()();
+      \u0275\u0275elementStart(83, "div")(84, "label", 39);
+      \u0275\u0275text(85, "Weight");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(86, "div", 15);
+      \u0275\u0275element(87, "input", 40);
+      \u0275\u0275elementStart(88, "div", 17)(89, "span", 24);
+      \u0275\u0275text(90, "kg");
+      \u0275\u0275elementEnd()()()()();
+      \u0275\u0275elementStart(91, "div", 41)(92, "div", 42)(93, "span", 43);
+      \u0275\u0275text(94, "BMI");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(95, "span", 44);
+      \u0275\u0275text(96, "--");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(97, "div", 45);
+      \u0275\u0275text(98, "Enter height and weight to calculate");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(99, "div", 46)(100, "label", 47);
+      \u0275\u0275text(101, "Notes");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(102, "textarea", 48);
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(103, "hr", 49);
+      \u0275\u0275elementStart(104, "div", 50)(105, "button", 51);
+      \u0275\u0275text(106, " Cancel ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(107, "button", 52);
+      \u0275\u0275text(108, " Save Vitals ");
+      \u0275\u0275elementEnd()()()()()()()();
+    }
+  }, encapsulation: 2 });
+};
+(() => {
+  (typeof ngDevMode === "undefined" || ngDevMode) && setClassMetadata(NewVitalStatisticComponent, [{
+    type: Component,
+    args: [{ selector: "app-new-vital-statistic", imports: [], template: `<div #newVitalStatistic id="modalEl" tabindex="-1" aria-hidden="true"\r
+  class="fixed left-0 right-0 top-0 z-50 hidden h-[calc(100%-1rem)] max-h-full w-full overflow-y-auto overflow-x-hidden p-4 md:inset-0">\r
+  <div class="relative max-h-full w-full max-w-2xl">\r
+    <!-- Modal content -->\r
+    <div class="relative rounded-lg bg-white shadow-sm dark:bg-gray-700">\r
+      <!-- Modal header -->\r
+      <div\r
+        class="flex space-x-2 items-center text-white bg-blue-600  justify-between rounded-t border-b p-2.5 dark:border-gray-600">\r
+        <div>\r
+          <i class="fas fa-xl fa-heart-pulse"></i>\r
+        </div>\r
+        <div>\r
+          <h3 class="text-xl font-semibold  lg:text-2xl">\r
+            Record Vital Signs\r
+          </h3>\r
+        </div>\r
+        <button type="button" (click)="closeModal()"\r
+          class="ms-auto inline-flex h-8 w-8 items-center justify-center rounded-lg bg-transparent text-sm text-gray-400 hover:bg-gray-200 hover:text-gray-900 dark:hover:bg-gray-600 dark:hover:text-white">\r
+          <svg class="h-3 w-3" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 14 14">\r
+            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"\r
+              d="m1 1 6 6m0 0 6 6M7 7l6-6M7 7l-6 6" />\r
+          </svg>\r
+          <span class="sr-only">Close modal</span>\r
+        </button>\r
+      </div>\r
+      <!-- Modal body -->\r
+      <div class="space-y-6 p-5">\r
+\r
+        <!-- Form Content -->\r
+        <div class="p-6">\r
+          <form>\r
+            <!-- Date/Time -->\r
+            <div class="mb-4">\r
+              <label for="recordDateTime" class="block text-sm font-medium text-gray-700 mb-1">Date & Time*</label>\r
+              <div class="relative">\r
+                <input type="datetime-local" id="recordDateTime"\r
+                  class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r
+                  required>\r
+                <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">\r
+                  <i class="fas fa-clock text-gray-400"></i>\r
+                </div>\r
+              </div>\r
+            </div>\r
+\r
+            <!-- Blood Pressure -->\r
+            <div class="mb-4">\r
+              <label class="block text-sm font-medium text-gray-700 mb-1">Blood Pressure</label>\r
+              <div class="grid grid-cols-3 gap-2">\r
+                <div class="relative">\r
+                  <input type="number" id="systolic" min="40" max="300"\r
+                    class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r
+                    placeholder="Systolic">\r
+                  <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">\r
+                    <span class="text-xs text-gray-400">mmHg</span>\r
+                  </div>\r
+                </div>\r
+                <div class="flex items-center justify-center">\r
+                  <span class="text-gray-400">/</span>\r
+                </div>\r
+                <div class="relative">\r
+                  <input type="number" id="diastolic" min="20" max="200"\r
+                    class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r
+                    placeholder="Diastolic">\r
+                  <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">\r
+                    <span class="text-xs text-gray-400">mmHg</span>\r
+                  </div>\r
+                </div>\r
+              </div>\r
+            </div>\r
+\r
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">\r
+              <!-- Heart Rate -->\r
+              <div>\r
+                <label for="heartRate" class="block text-sm font-medium text-gray-700 mb-1">Heart Rate</label>\r
+                <div class="relative">\r
+                  <input type="number" id="heartRate" min="20" max="250"\r
+                    class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r
+                    placeholder="BPM">\r
+                  <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">\r
+                    <i class="fas fa-heartbeat text-gray-400"></i>\r
+                  </div>\r
+                </div>\r
+              </div>\r
+\r
+              <!-- Respiratory Rate -->\r
+              <div>\r
+                <label for="respiratoryRate" class="block text-sm font-medium text-gray-700 mb-1">Respiratory\r
+                  Rate</label>\r
+                <div class="relative">\r
+                  <input type="number" id="respiratoryRate" min="5" max="60"\r
+                    class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r
+                    placeholder="Breaths/min">\r
+                  <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">\r
+                    <i class="fas fa-lungs text-gray-400"></i>\r
+                  </div>\r
+                </div>\r
+              </div>\r
+            </div>\r
+\r
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">\r
+              <!-- Temperature -->\r
+              <div>\r
+                <label for="temperature" class="block text-sm font-medium text-gray-700 mb-1">Temperature</label>\r
+                <div class="relative">\r
+                  <input type="number" id="temperature" min="30" max="43" step="0.1"\r
+                    class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r
+                    placeholder="\xB0C">\r
+                  <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">\r
+                    <span class="text-gray-400">\xB0C</span>\r
+                  </div>\r
+                </div>\r
+              </div>\r
+\r
+              <!-- Oxygen Saturation -->\r
+              <div>\r
+                <label for="oxygenSaturation" class="block text-sm font-medium text-gray-700 mb-1">SpO\u2082</label>\r
+                <div class="relative">\r
+                  <input type="number" id="oxygenSaturation" min="50" max="100"\r
+                    class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r
+                    placeholder="%">\r
+                  <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">\r
+                    <span class="text-gray-400">%</span>\r
+                  </div>\r
+                </div>\r
+              </div>\r
+            </div>\r
+\r
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">\r
+              <!-- Height -->\r
+              <div>\r
+                <label for="height" class="block text-sm font-medium text-gray-700 mb-1">Height</label>\r
+                <div class="relative">\r
+                  <input type="number" id="height" min="30" max="250" step="0.1"\r
+                    class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r
+                    placeholder="cm">\r
+                  <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">\r
+                    <span class="text-gray-400">cm</span>\r
+                  </div>\r
+                </div>\r
+              </div>\r
+\r
+              <!-- Weight -->\r
+              <div>\r
+                <label for="weight" class="block text-sm font-medium text-gray-700 mb-1">Weight</label>\r
+                <div class="relative">\r
+                  <input type="number" id="weight" min="1" max="300" step="0.1"\r
+                    class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r
+                    placeholder="kg">\r
+                  <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">\r
+                    <span class="text-gray-400">kg</span>\r
+                  </div>\r
+                </div>\r
+              </div>\r
+            </div>\r
+\r
+            <!-- BMI Calculation -->\r
+            <div class="mb-4 bg-blue-50 p-3 rounded-lg">\r
+              <div class="flex justify-between items-center">\r
+                <span class="text-sm font-medium text-gray-700">BMI</span>\r
+                <span id="bmiResult" class="text-lg font-bold text-blue-700">--</span>\r
+              </div>\r
+              <div id="bmiCategory" class="text-xs text-gray-500 mt-1">Enter height and weight to calculate</div>\r
+            </div>\r
+\r
+            <!-- Notes -->\r
+            <div class="mb-6">\r
+              <label for="notes" class="block text-sm font-medium text-gray-700 mb-1">Notes</label>\r
+              <textarea id="notes" rows="2"\r
+                class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r
+                placeholder="Any additional observations"></textarea>\r
+            </div>\r
+               <hr class="my-4 border-gray-300 dark:border-gray-600" />\r
+            <!-- Form Actions -->\r
+            <div class="flex justify-end space-x-3">\r
+              <button type="button"\r
+                class="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">\r
+                Cancel\r
+              </button>\r
+              <button type="submit"\r
+                class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">\r
+                Save Vitals\r
+              </button>\r
+            </div>\r
+          </form>\r
+        </div>\r
+      </div>\r
+    </div>\r
+  </div>\r
+</div>\r
+\r
+\r
+<!-- <script>\r
+        // BMI Calculation\r
+        const heightInput = document.getElementById('height');\r
+        const weightInput = document.getElementById('weight');\r
+        const bmiResult = document.getElementById('bmiResult');\r
+        const bmiCategory = document.getElementById('bmiCategory');\r
+\r
+        function calculateBMI() {\r
+            const height = parseFloat(heightInput.value) / 100; // convert cm to m\r
+            const weight = parseFloat(weightInput.value);\r
+\r
+            if (height && weight) {\r
+                const bmi = (weight / (height * height)).toFixed(1);\r
+                bmiResult.textContent = bmi;\r
+\r
+                // Determine category\r
+                if (bmi < 18.5) {\r
+                    bmiCategory.textContent = "Underweight";\r
+                    bmiCategory.className = "text-xs text-blue-500 mt-1";\r
+                } else if (bmi >= 18.5 && bmi < 25) {\r
+                    bmiCategory.textContent = "Normal weight";\r
+                    bmiCategory.className = "text-xs text-green-500 mt-1";\r
+                } else if (bmi >= 25 && bmi < 30) {\r
+                    bmiCategory.textContent = "Overweight";\r
+                    bmiCategory.className = "text-xs text-yellow-500 mt-1";\r
+                } else {\r
+                    bmiCategory.textContent = "Obese";\r
+                    bmiCategory.className = "text-xs text-red-500 mt-1";\r
+                }\r
+            } else {\r
+                bmiResult.textContent = "--";\r
+                bmiCategory.textContent = "Enter height and weight to calculate";\r
+                bmiCategory.className = "text-xs text-gray-500 mt-1";\r
+            }\r
+        }\r
+\r
+        heightInput.addEventListener('input', calculateBMI);\r
+        weightInput.addEventListener('input', calculateBMI);\r
+    <\/script>\r
+</body>\r
+</html> -->\r
+` }]
+  }], () => [{ type: ShareDataService }], { newVitalStatistic: [{
+    type: ViewChild,
+    args: ["newVitalStatistic"]
+  }] });
+})();
+(() => {
+  (typeof ngDevMode === "undefined" || ngDevMode) && \u0275setClassDebugInfo(NewVitalStatisticComponent, { className: "NewVitalStatisticComponent", filePath: "src/app/patient/new-vital-statistic/new-vital-statistic.component.ts", lineNumber: 12 });
+})();
+
+// src/app/patient/new-medical-history/new-medical-history.component.ts
+var NewMedicalHistoryComponent = class _NewMedicalHistoryComponent {
+  shareDataService;
+  router;
+  constructor(shareDataService, router) {
+    this.shareDataService = shareDataService;
+    this.router = router;
+  }
+  addNewVitalStatistic() {
+    this.shareDataService.setDilaogName(DialogNameEnum.newVitalStatistic);
+  }
+  addNewAllergy() {
+    this.shareDataService.setDilaogName(DialogNameEnum.newAllergy);
+  }
+  addNewCurrentMedication() {
+    this.shareDataService.setDilaogName(DialogNameEnum.newCurrentMedication);
+  }
+  addNewImmunization() {
+    this.shareDataService.setDilaogName(DialogNameEnum.newImmunization);
+  }
+  addNewFamilyHistory() {
+    this.shareDataService.setDilaogName(DialogNameEnum.newFamilyHistory);
+  }
+  addNewMedicalCondition() {
+    this.shareDataService.setDilaogName(DialogNameEnum.newMedicalCondition);
+  }
+  navigateTOComplete() {
+    this.router.navigate(["/home/" + REVIEW_PATIENT_PATH]);
+  }
+  static \u0275fac = function NewMedicalHistoryComponent_Factory(__ngFactoryType__) {
+    return new (__ngFactoryType__ || _NewMedicalHistoryComponent)(\u0275\u0275directiveInject(ShareDataService), \u0275\u0275directiveInject(Router));
+  };
+  static \u0275cmp = /* @__PURE__ */ \u0275\u0275defineComponent({ type: _NewMedicalHistoryComponent, selectors: [["app-new-medical-history"]], decls: 316, vars: 0, consts: [[1, "container", "mx-auto", "px-4", "py-8"], [1, "mb-8"], [1, "flex", "items-center", "justify-center"], [1, "flex", "items-center", "space-x-8"], [1, "flex", "items-center", "space-x-3"], [1, "flex", "items-center", "justify-center", "w-8", "h-8", "rounded-full", "bg-gray-200", "text-gray-600"], [1, "font-medium"], [1, "flex", "items-center", "justify-center", "w-8", "h-8", "rounded-full", "bg-blue-600", "text-white"], [1, "font-medium", "text-blue-600"], [1, "font-medium", "text-gray-500"], [1, "bg-white", "rounded-xl", "shadow-md", "overflow-hidden", "mb-8"], [1, "p-6"], [1, "flex", "items-start"], [1, "mr-6"], [1, "w-24", "h-24", "rounded-full", "bg-blue-100", "flex", "items-center", "justify-center"], [1, "fas", "fa-user", "text-blue-500", "text-4xl"], [1, "flex-1"], [1, "flex", "justify-between", "items-start"], [1, "text-2xl", "font-bold", "text-gray-800"], [1, "text-gray-600"], [1, "flex", "space-x-2"], [1, "px-4", "py-2", "bg-blue-600", "text-white", "rounded-lg", "hover:bg-blue-700", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:ring-offset-2", 3, "click"], [1, "font-medium", "mx-2", "hover:p-2"], [1, "fa-solid", "fa-arrow-right"], [1, "grid", "grid-cols-1", "md:grid-cols-4", "gap-4", "mt-4"], [1, "text-sm", "text-gray-500"], [1, "grid", "grid-cols-1", "lg:grid-cols-3", "gap-6"], [1, "lg:col-span-2", "space-y-6"], [1, "bg-white", "rounded-xl", "shadow-md", "overflow-hidden"], [1, "flex", "justify-between", "items-center", "mb-4"], [1, "text-xl", "font-semibold", "text-gray-800"], [1, "text-blue-600", "hover:text-blue-800", 3, "click"], [1, "fas", "fa-plus", "mr-1"], [1, "space-y-3"], [1, "bg-red-50", "rounded-lg"], [1, "flex", "justify-end"], [1, "fas", "fa-edit", "fa-xl", "mr-1", "text-red-400", "hover:text-red-500"], [1, "fas", "fa-window-close", "fa-xl", "text-red-400", "hover:text-red-500"], [1, "flex", "justify-between", "items-center", "p-3"], [1, "text-sm", "text-gray-600"], [1, "flex", "justify-between", "items-center", "p-3", "bg-yellow-50", "rounded-lg"], [1, "overflow-x-auto"], [1, "min-w-full", "divide-y", "divide-gray-200"], [1, "bg-gray-50"], [1, "px-4", "py-3", "text-left", "text-xs", "font-medium", "text-gray-500", "uppercase", "tracking-wider"], [1, "bg-white", "divide-y", "divide-gray-200"], [1, "px-4", "py-3", "whitespace-nowrap"], [1, "space-y-4"], [1, "border-l-4", "border-blue-500", "pl-4", "py-1"], [1, "text-xl", "font-semibold", "text-gray-800", "mb-4"], [1, "border", "rounded-lg", "p-4", "hover:bg-gray-50", "cursor-pointer"], [1, "bg-green-100", "text-green-800", "text-xs", "px-2", "py-1", "rounded"], [1, "text-sm", "text-gray-500", "mt-2"], [1, "mt-4", "text-blue-600", "hover:text-blue-800", "w-full", "text-center", "py-2", "border", "border-dashed", "border-gray-300", "rounded-lg"], [1, "fas", "fa-history", "mr-1"], [1, "space-y-6"], [1, "grid", "grid-cols-2", "gap-4"], [1, "bg-blue-50", "p-3", "rounded-lg"], [1, "text-2xl", "font-bold"], [1, "text-xs", "text-gray-500"], [1, "mt-4", "w-full", "bg-blue-600", "hover:bg-blue-700", "text-white", "py-2", "rounded-lg", 3, "click"], [1, "flex", "justify-between", "items-center", "p-3", "bg-green-50", "rounded-lg"], [1, "p-3", "bg-purple-50", "rounded-lg"]], template: function NewMedicalHistoryComponent_Template(rf, ctx) {
+    if (rf & 1) {
+      \u0275\u0275elementStart(0, "div", 0)(1, "div", 1)(2, "nav", 2)(3, "ol", 3)(4, "li", 4)(5, "div", 5);
+      \u0275\u0275text(6, " 1 ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(7, "span", 6);
+      \u0275\u0275text(8, "Personal Information");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(9, "li", 4)(10, "div", 7);
+      \u0275\u0275text(11, " 2 ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(12, "span", 8);
+      \u0275\u0275text(13, "Medical History");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(14, "li", 4)(15, "div", 5);
+      \u0275\u0275text(16, " 3 ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(17, "span", 9);
+      \u0275\u0275text(18, "Confirmaion");
+      \u0275\u0275elementEnd()()()()();
+      \u0275\u0275elementStart(19, "div", 10)(20, "div", 11)(21, "div", 12)(22, "div", 13)(23, "div", 14);
+      \u0275\u0275element(24, "i", 15);
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(25, "div", 16)(26, "div", 17)(27, "div")(28, "h2", 18);
+      \u0275\u0275text(29, "John Doe");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(30, "p", 19);
+      \u0275\u0275text(31, "Patient ID: P-123456");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(32, "div", 20)(33, "button", 21);
+      \u0275\u0275listener("click", function NewMedicalHistoryComponent_Template_button_click_33_listener() {
+        return ctx.navigateTOComplete();
+      });
+      \u0275\u0275elementStart(34, "i", 22);
+      \u0275\u0275text(35, "Confirm");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(36, "i", 23);
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(37, "div", 24)(38, "div")(39, "p", 25);
+      \u0275\u0275text(40, "Date of Birth");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(41, "p", 6);
+      \u0275\u0275text(42, "May 15, 1985 (38 years)");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(43, "div")(44, "p", 25);
+      \u0275\u0275text(45, "Gender");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(46, "p", 6);
+      \u0275\u0275text(47, "Male");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(48, "div")(49, "p", 25);
+      \u0275\u0275text(50, "Blood Type");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(51, "p", 6);
+      \u0275\u0275text(52, "O+");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(53, "div")(54, "p", 25);
+      \u0275\u0275text(55, "Last Visit");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(56, "p", 6);
+      \u0275\u0275text(57, "June 12, 2023");
+      \u0275\u0275elementEnd()()()()()()();
+      \u0275\u0275elementStart(58, "div", 26)(59, "div", 27)(60, "div", 28)(61, "div", 11)(62, "div", 29)(63, "h3", 30);
+      \u0275\u0275text(64, "Allergies");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(65, "button", 31);
+      \u0275\u0275listener("click", function NewMedicalHistoryComponent_Template_button_click_65_listener() {
+        return ctx.addNewAllergy();
+      });
+      \u0275\u0275element(66, "i", 32);
+      \u0275\u0275text(67, " Add ");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(68, "div", 33)(69, "div", 34)(70, "div", 35);
+      \u0275\u0275element(71, "div", 36)(72, "div", 37);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(73, "div", 38)(74, "div")(75, "p", 6);
+      \u0275\u0275text(76, "Penicillin");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(77, "p", 39);
+      \u0275\u0275text(78, "Severe: Anaphylaxis");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(79, "div", 25);
+      \u0275\u0275text(80, "Added: 05/10/2018");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(81, "div", 40)(82, "div")(83, "p", 6);
+      \u0275\u0275text(84, "Sulfa Drugs");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(85, "p", 39);
+      \u0275\u0275text(86, "Moderate: Rash");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(87, "div", 25);
+      \u0275\u0275text(88, "Added: 02/15/2020");
+      \u0275\u0275elementEnd()()()()();
+      \u0275\u0275elementStart(89, "div", 28)(90, "div", 11)(91, "div", 29)(92, "h3", 30);
+      \u0275\u0275text(93, "Current Medications");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(94, "button", 31);
+      \u0275\u0275listener("click", function NewMedicalHistoryComponent_Template_button_click_94_listener() {
+        return ctx.addNewCurrentMedication();
+      });
+      \u0275\u0275element(95, "i", 32);
+      \u0275\u0275text(96, " Add ");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(97, "div", 41)(98, "table", 42)(99, "thead", 43)(100, "tr")(101, "th", 44);
+      \u0275\u0275text(102, "Medication ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(103, "th", 44);
+      \u0275\u0275text(104, "Dosage");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(105, "th", 44);
+      \u0275\u0275text(106, "Frequency ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(107, "th", 44);
+      \u0275\u0275text(108, "Prescribed ");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(109, "tbody", 45)(110, "tr")(111, "td", 46);
+      \u0275\u0275text(112, "Lisinopril");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(113, "td", 46);
+      \u0275\u0275text(114, "10 mg");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(115, "td", 46);
+      \u0275\u0275text(116, "Once daily");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(117, "td", 46);
+      \u0275\u0275text(118, "03/15/2023");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(119, "tr")(120, "td", 46);
+      \u0275\u0275text(121, "Atorvastatin");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(122, "td", 46);
+      \u0275\u0275text(123, "20 mg");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(124, "td", 46);
+      \u0275\u0275text(125, "Once daily");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(126, "td", 46);
+      \u0275\u0275text(127, "01/10/2023");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(128, "tr")(129, "td", 46);
+      \u0275\u0275text(130, "Metformin");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(131, "td", 46);
+      \u0275\u0275text(132, "500 mg");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(133, "td", 46);
+      \u0275\u0275text(134, "Twice daily");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(135, "td", 46);
+      \u0275\u0275text(136, "02/22/2023");
+      \u0275\u0275elementEnd()()()()()()();
+      \u0275\u0275elementStart(137, "div", 28)(138, "div", 11)(139, "div", 29)(140, "h3", 30);
+      \u0275\u0275text(141, "Medical Conditions");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(142, "button", 31);
+      \u0275\u0275listener("click", function NewMedicalHistoryComponent_Template_button_click_142_listener() {
+        return ctx.addNewMedicalCondition();
+      });
+      \u0275\u0275element(143, "i", 32);
+      \u0275\u0275text(144, " Add ");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(145, "div", 47)(146, "div", 48)(147, "p", 6);
+      \u0275\u0275text(148, "Type 2 Diabetes");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(149, "p", 39);
+      \u0275\u0275text(150, "Diagnosed: 2018, Managed with medication");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(151, "div", 48)(152, "p", 6);
+      \u0275\u0275text(153, "Hypertension");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(154, "p", 39);
+      \u0275\u0275text(155, "Diagnosed: 2019, Controlled");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(156, "div", 48)(157, "p", 6);
+      \u0275\u0275text(158, "Hyperlipidemia");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(159, "p", 39);
+      \u0275\u0275text(160, "Diagnosed: 2020, On statin therapy");
+      \u0275\u0275elementEnd()()()()();
+      \u0275\u0275elementStart(161, "div", 28)(162, "div", 11)(163, "h3", 49);
+      \u0275\u0275text(164, "Recent Visits");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(165, "div", 47)(166, "div", 50)(167, "div", 17)(168, "div")(169, "p", 6);
+      \u0275\u0275text(170, "Annual Physical Exam");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(171, "p", 39);
+      \u0275\u0275text(172, "Dr. Sarah Johnson");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(173, "span", 51);
+      \u0275\u0275text(174, "Completed");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(175, "p", 52);
+      \u0275\u0275text(176, "June 12, 2023 \u2022 10:30 AM");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(177, "div", 50)(178, "div", 17)(179, "div")(180, "p", 6);
+      \u0275\u0275text(181, "Diabetes Follow-up");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(182, "p", 39);
+      \u0275\u0275text(183, "Dr. Michael Chen");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(184, "span", 51);
+      \u0275\u0275text(185, "Completed");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(186, "p", 52);
+      \u0275\u0275text(187, "March 28, 2023 \u2022 2:15 PM");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(188, "div", 50)(189, "div", 17)(190, "div")(191, "p", 6);
+      \u0275\u0275text(192, "Blood Pressure Check");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(193, "p", 39);
+      \u0275\u0275text(194, "Nurse Practitioner Amy Wilson");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(195, "span", 51);
+      \u0275\u0275text(196, "Completed");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(197, "p", 52);
+      \u0275\u0275text(198, "January 15, 2023 \u2022 9:00 AM");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(199, "button", 53);
+      \u0275\u0275element(200, "i", 54);
+      \u0275\u0275text(201, " View Full History ");
+      \u0275\u0275elementEnd()()()();
+      \u0275\u0275elementStart(202, "div", 55)(203, "div", 28)(204, "div", 11)(205, "h3", 49);
+      \u0275\u0275text(206, "Vital Statistics");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(207, "div", 56)(208, "div", 57)(209, "p", 25);
+      \u0275\u0275text(210, "Blood Pressure");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(211, "p", 58);
+      \u0275\u0275text(212, "128/82");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(213, "p", 59);
+      \u0275\u0275text(214, "Last: 06/12/2023");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(215, "div", 57)(216, "p", 25);
+      \u0275\u0275text(217, "Heart Rate");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(218, "p", 58);
+      \u0275\u0275text(219, "72");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(220, "p", 59);
+      \u0275\u0275text(221, "Last: 06/12/2023");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(222, "div", 57)(223, "p", 25);
+      \u0275\u0275text(224, "Weight");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(225, "p", 58);
+      \u0275\u0275text(226, "185 lbs");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(227, "p", 59);
+      \u0275\u0275text(228, "Last: 06/12/2023");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(229, "div", 57)(230, "p", 25);
+      \u0275\u0275text(231, "Height");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(232, "p", 58);
+      \u0275\u0275text(233, `5'11"`);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(234, "p", 59);
+      \u0275\u0275text(235, "Last: 06/12/2023");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(236, "div", 57)(237, "p", 25);
+      \u0275\u0275text(238, "BMI");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(239, "p", 58);
+      \u0275\u0275text(240, "25.8");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(241, "p", 59);
+      \u0275\u0275text(242, "Last: 06/12/2023");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(243, "div", 57)(244, "p", 25);
+      \u0275\u0275text(245, "A1C");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(246, "p", 58);
+      \u0275\u0275text(247, "6.2%");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(248, "p", 59);
+      \u0275\u0275text(249, "Last: 06/12/2023");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(250, "button", 60);
+      \u0275\u0275listener("click", function NewMedicalHistoryComponent_Template_button_click_250_listener() {
+        return ctx.addNewVitalStatistic();
+      });
+      \u0275\u0275element(251, "i", 32);
+      \u0275\u0275text(252, " Record New Vitals ");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(253, "div", 28)(254, "div", 11)(255, "div", 29)(256, "h3", 30);
+      \u0275\u0275text(257, "Immunizations");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(258, "button", 31);
+      \u0275\u0275listener("click", function NewMedicalHistoryComponent_Template_button_click_258_listener() {
+        return ctx.addNewImmunization();
+      });
+      \u0275\u0275element(259, "i", 32);
+      \u0275\u0275text(260, " Add ");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(261, "div", 33)(262, "div", 61)(263, "div")(264, "p", 6);
+      \u0275\u0275text(265, "COVID-19 Vaccine");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(266, "p", 39);
+      \u0275\u0275text(267, "Moderna, Booster");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(268, "div", 25);
+      \u0275\u0275text(269, "10/15/2022");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(270, "div", 61)(271, "div")(272, "p", 6);
+      \u0275\u0275text(273, "Influenza Vaccine");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(274, "p", 39);
+      \u0275\u0275text(275, "Seasonal 2022-2023");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(276, "div", 25);
+      \u0275\u0275text(277, "09/28/2022");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(278, "div", 61)(279, "div")(280, "p", 6);
+      \u0275\u0275text(281, "Tetanus Booster");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(282, "p", 39);
+      \u0275\u0275text(283, "Tdap");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(284, "div", 25);
+      \u0275\u0275text(285, "05/10/2020");
+      \u0275\u0275elementEnd()()()()();
+      \u0275\u0275elementStart(286, "div", 28)(287, "div", 11)(288, "div", 29)(289, "h3", 30);
+      \u0275\u0275text(290, "Family History");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(291, "button", 31);
+      \u0275\u0275listener("click", function NewMedicalHistoryComponent_Template_button_click_291_listener() {
+        return ctx.addNewFamilyHistory();
+      });
+      \u0275\u0275element(292, "i", 32);
+      \u0275\u0275text(293, " Add ");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(294, "div", 33)(295, "div", 62)(296, "p", 6);
+      \u0275\u0275text(297, "Father");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(298, "p", 39);
+      \u0275\u0275text(299, "Type 2 Diabetes, Heart Disease (died at 68)");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(300, "div", 62)(301, "p", 6);
+      \u0275\u0275text(302, "Mother");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(303, "p", 39);
+      \u0275\u0275text(304, "Hypertension, Osteoporosis");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(305, "div", 62)(306, "p", 6);
+      \u0275\u0275text(307, "Sibling");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(308, "p", 39);
+      \u0275\u0275text(309, "Brother - Asthma");
+      \u0275\u0275elementEnd()()()()()()()();
+      \u0275\u0275element(310, "app-new-allergies")(311, "app-new-vital-statistic")(312, "app-new-immunization")(313, "app-new-family-history")(314, "app-new-medical-condition")(315, "app-new-current-medication");
+    }
+  }, dependencies: [NewAllergiesComponent, NewCurrentMedicationComponent, NewVitalStatisticComponent, NewImmunizationComponent, NewFamilyHistoryComponent, NewMedicalConditionComponent], encapsulation: 2 });
+};
+(() => {
+  (typeof ngDevMode === "undefined" || ngDevMode) && setClassMetadata(NewMedicalHistoryComponent, [{
+    type: Component,
+    args: [{ selector: "app-new-medical-history", imports: [NewAllergiesComponent, NewCurrentMedicationComponent, NewVitalStatisticComponent, NewImmunizationComponent, NewFamilyHistoryComponent, NewMedicalConditionComponent], template: `<div class="container mx-auto px-4 py-8">\r
+  <!-- Header -->\r
+  <div class="mb-8">\r
+    <nav class="flex items-center justify-center">\r
+      <ol class="flex items-center space-x-8">\r
+        <li class="flex items-center space-x-3">\r
+          <div class="flex items-center justify-center w-8 h-8 rounded-full bg-gray-200 text-gray-600">\r
+            1\r
+          </div>\r
+          <span class="font-medium ">Personal Information</span>\r
+        </li>\r
+        <li class="flex items-center space-x-3">\r
+          <div class="flex items-center justify-center w-8 h-8 rounded-full bg-blue-600 text-white">\r
+            2\r
+          </div>\r
+          <span class="font-medium text-blue-600 ">Medical History</span>\r
+        </li>\r
+        <li class="flex items-center space-x-3">\r
+          <div class="flex items-center justify-center w-8 h-8 rounded-full bg-gray-200 text-gray-600">\r
+            3\r
+          </div>\r
+          <span class="font-medium text-gray-500">Confirmaion</span>\r
+        </li>\r
+\r
+      </ol>\r
+    </nav>\r
+  </div>\r
+\r
+  <!-- Patient Info Card -->\r
+  <div class="bg-white rounded-xl shadow-md overflow-hidden mb-8">\r
+    <div class="p-6">\r
+      <div class="flex items-start">\r
+        <div class="mr-6">\r
+          <div class="w-24 h-24 rounded-full bg-blue-100 flex items-center justify-center">\r
+            <i class="fas fa-user text-blue-500 text-4xl"></i>\r
+          </div>\r
+        </div>\r
+        <div class="flex-1">\r
+          <div class="flex justify-between items-start">\r
+            <div>\r
+              <h2 class="text-2xl font-bold text-gray-800">John Doe</h2>\r
+              <p class="text-gray-600">Patient ID: P-123456</p>\r
+            </div>\r
+            <div class="flex space-x-2">\r
+              <button (click)="navigateTOComplete()" class="px-4 py-2 bg-blue-600 text-white  rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">\r
+                <i class="font-medium mx-2 hover:p-2">Confirm</i>\r
+                <i class="fa-solid fa-arrow-right"></i>\r
+              </button>\r
+\r
+            </div>\r
+          </div>\r
+\r
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4">\r
+            <div>\r
+              <p class="text-sm text-gray-500">Date of Birth</p>\r
+              <p class="font-medium">May 15, 1985 (38 years)</p>\r
+            </div>\r
+            <div>\r
+              <p class="text-sm text-gray-500">Gender</p>\r
+              <p class="font-medium">Male</p>\r
+            </div>\r
+            <div>\r
+              <p class="text-sm text-gray-500">Blood Type</p>\r
+              <p class="font-medium">O+</p>\r
+            </div>\r
+            <div>\r
+              <p class="text-sm text-gray-500">Last Visit</p>\r
+              <p class="font-medium">June 12, 2023</p>\r
+            </div>\r
+          </div>\r
+        </div>\r
+      </div>\r
+    </div>\r
+  </div>\r
+\r
+  <!-- Main Content -->\r
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">\r
+    <!-- Left Column -->\r
+    <div class="lg:col-span-2 space-y-6">\r
+      <!-- Allergies Section -->\r
+      <div class="bg-white rounded-xl shadow-md overflow-hidden">\r
+        <div class="p-6">\r
+          <div class="flex justify-between items-center mb-4">\r
+            <h3 class="text-xl font-semibold text-gray-800">Allergies</h3>\r
+            <button (click)="addNewAllergy()" class="text-blue-600  hover:text-blue-800">\r
+              <i class="fas fa-plus mr-1"></i> Add\r
+            </button>\r
+          </div>\r
+          <div class="space-y-3">\r
+            <div class="bg-red-50 rounded-lg">\r
+              <div class="flex  justify-end">\r
+                <div class="fas fa-edit fa-xl mr-1 text-red-400 hover:text-red-500"></div>\r
+                <div class="fas fa-window-close fa-xl text-red-400 hover:text-red-500"></div>\r
+              </div>\r
+              <div class="flex justify-between items-center p-3 ">\r
+                <div>\r
+                  <p class="font-medium">Penicillin</p>\r
+                  <p class="text-sm text-gray-600">Severe: Anaphylaxis</p>\r
+                </div>\r
+                <div class="text-sm text-gray-500">Added: 05/10/2018</div>\r
+              </div>\r
+            </div>\r
+            <div class="flex justify-between items-center p-3 bg-yellow-50 rounded-lg">\r
+              <div>\r
+                <p class="font-medium">Sulfa Drugs</p>\r
+                <p class="text-sm text-gray-600">Moderate: Rash</p>\r
+              </div>\r
+              <div class="text-sm text-gray-500">Added: 02/15/2020</div>\r
+            </div>\r
+          </div>\r
+        </div>\r
+      </div>\r
+\r
+      <!-- Medications Section -->\r
+      <div class="bg-white rounded-xl shadow-md overflow-hidden">\r
+        <div class="p-6">\r
+          <div class="flex justify-between items-center mb-4">\r
+            <h3 class="text-xl font-semibold text-gray-800">Current Medications</h3>\r
+            <button (click)="addNewCurrentMedication()" class="text-blue-600 hover:text-blue-800">\r
+              <i class="fas fa-plus mr-1"></i> Add\r
+            </button>\r
+          </div>\r
+          <div class="overflow-x-auto">\r
+            <table class="min-w-full divide-y divide-gray-200">\r
+              <thead class="bg-gray-50">\r
+                <tr>\r
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Medication\r
+                  </th>\r
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Dosage</th>\r
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Frequency\r
+                  </th>\r
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Prescribed\r
+                  </th>\r
+                </tr>\r
+              </thead>\r
+              <tbody class="bg-white divide-y divide-gray-200">\r
+                <tr>\r
+                  <td class="px-4 py-3 whitespace-nowrap">Lisinopril</td>\r
+                  <td class="px-4 py-3 whitespace-nowrap">10 mg</td>\r
+                  <td class="px-4 py-3 whitespace-nowrap">Once daily</td>\r
+                  <td class="px-4 py-3 whitespace-nowrap">03/15/2023</td>\r
+                </tr>\r
+                <tr>\r
+                  <td class="px-4 py-3 whitespace-nowrap">Atorvastatin</td>\r
+                  <td class="px-4 py-3 whitespace-nowrap">20 mg</td>\r
+                  <td class="px-4 py-3 whitespace-nowrap">Once daily</td>\r
+                  <td class="px-4 py-3 whitespace-nowrap">01/10/2023</td>\r
+                </tr>\r
+                <tr>\r
+                  <td class="px-4 py-3 whitespace-nowrap">Metformin</td>\r
+                  <td class="px-4 py-3 whitespace-nowrap">500 mg</td>\r
+                  <td class="px-4 py-3 whitespace-nowrap">Twice daily</td>\r
+                  <td class="px-4 py-3 whitespace-nowrap">02/22/2023</td>\r
+                </tr>\r
+              </tbody>\r
+            </table>\r
+          </div>\r
+        </div>\r
+      </div>\r
+\r
+      <!-- Medical History Section -->\r
+      <div class="bg-white rounded-xl shadow-md overflow-hidden">\r
+        <div class="p-6">\r
+          <div class="flex justify-between items-center mb-4">\r
+            <h3 class="text-xl font-semibold text-gray-800">Medical Conditions</h3>\r
+            <button (click)="addNewMedicalCondition()" class="text-blue-600 hover:text-blue-800">\r
+              <i class="fas fa-plus mr-1"></i> Add\r
+            </button>\r
+          </div>\r
+          <div class="space-y-4">\r
+            <div class="border-l-4 border-blue-500 pl-4 py-1">\r
+              <p class="font-medium">Type 2 Diabetes</p>\r
+              <p class="text-sm text-gray-600">Diagnosed: 2018, Managed with medication</p>\r
+            </div>\r
+            <div class="border-l-4 border-blue-500 pl-4 py-1">\r
+              <p class="font-medium">Hypertension</p>\r
+              <p class="text-sm text-gray-600">Diagnosed: 2019, Controlled</p>\r
+            </div>\r
+            <div class="border-l-4 border-blue-500 pl-4 py-1">\r
+              <p class="font-medium">Hyperlipidemia</p>\r
+              <p class="text-sm text-gray-600">Diagnosed: 2020, On statin therapy</p>\r
+            </div>\r
+          </div>\r
+        </div>\r
+      </div>\r
+\r
+      <!-- Visit History -->\r
+      <div class="bg-white rounded-xl shadow-md overflow-hidden">\r
+        <div class="p-6">\r
+          <h3 class="text-xl font-semibold text-gray-800 mb-4">Recent Visits</h3>\r
+          <div class="space-y-4">\r
+            <div class="border rounded-lg p-4 hover:bg-gray-50 cursor-pointer">\r
+              <div class="flex justify-between items-start">\r
+                <div>\r
+                  <p class="font-medium">Annual Physical Exam</p>\r
+                  <p class="text-sm text-gray-600">Dr. Sarah Johnson</p>\r
+                </div>\r
+                <span class="bg-green-100 text-green-800 text-xs px-2 py-1 rounded">Completed</span>\r
+              </div>\r
+              <p class="text-sm text-gray-500 mt-2">June 12, 2023 \u2022 10:30 AM</p>\r
+            </div>\r
+            <div class="border rounded-lg p-4 hover:bg-gray-50 cursor-pointer">\r
+              <div class="flex justify-between items-start">\r
+                <div>\r
+                  <p class="font-medium">Diabetes Follow-up</p>\r
+                  <p class="text-sm text-gray-600">Dr. Michael Chen</p>\r
+                </div>\r
+                <span class="bg-green-100 text-green-800 text-xs px-2 py-1 rounded">Completed</span>\r
+              </div>\r
+              <p class="text-sm text-gray-500 mt-2">March 28, 2023 \u2022 2:15 PM</p>\r
+            </div>\r
+            <div class="border rounded-lg p-4 hover:bg-gray-50 cursor-pointer">\r
+              <div class="flex justify-between items-start">\r
+                <div>\r
+                  <p class="font-medium">Blood Pressure Check</p>\r
+                  <p class="text-sm text-gray-600">Nurse Practitioner Amy Wilson</p>\r
+                </div>\r
+                <span class="bg-green-100 text-green-800 text-xs px-2 py-1 rounded">Completed</span>\r
+              </div>\r
+              <p class="text-sm text-gray-500 mt-2">January 15, 2023 \u2022 9:00 AM</p>\r
+            </div>\r
+          </div>\r
+          <button\r
+            class="mt-4 text-blue-600 hover:text-blue-800 w-full text-center py-2 border border-dashed border-gray-300 rounded-lg">\r
+            <i class="fas fa-history mr-1"></i> View Full History\r
+          </button>\r
+        </div>\r
+      </div>\r
+    </div>\r
+\r
+    <!-- Right Column -->\r
+    <div class="space-y-6">\r
+      <!-- Vital Stats -->\r
+      <div class="bg-white rounded-xl shadow-md overflow-hidden">\r
+        <div class="p-6">\r
+          <h3 class="text-xl font-semibold text-gray-800 mb-4">Vital Statistics</h3>\r
+          <div class="grid grid-cols-2 gap-4">\r
+            <div class="bg-blue-50 p-3 rounded-lg">\r
+              <p class="text-sm text-gray-500">Blood Pressure</p>\r
+              <p class="text-2xl font-bold">128/82</p>\r
+              <p class="text-xs text-gray-500">Last: 06/12/2023</p>\r
+            </div>\r
+            <div class="bg-blue-50 p-3 rounded-lg">\r
+              <p class="text-sm text-gray-500">Heart Rate</p>\r
+              <p class="text-2xl font-bold">72</p>\r
+              <p class="text-xs text-gray-500">Last: 06/12/2023</p>\r
+            </div>\r
+            <div class="bg-blue-50 p-3 rounded-lg">\r
+              <p class="text-sm text-gray-500">Weight</p>\r
+              <p class="text-2xl font-bold">185 lbs</p>\r
+              <p class="text-xs text-gray-500">Last: 06/12/2023</p>\r
+            </div>\r
+            <div class="bg-blue-50 p-3 rounded-lg">\r
+              <p class="text-sm text-gray-500">Height</p>\r
+              <p class="text-2xl font-bold">5'11"</p>\r
+              <p class="text-xs text-gray-500">Last: 06/12/2023</p>\r
+            </div>\r
+            <div class="bg-blue-50 p-3 rounded-lg">\r
+              <p class="text-sm text-gray-500">BMI</p>\r
+              <p class="text-2xl font-bold">25.8</p>\r
+              <p class="text-xs text-gray-500">Last: 06/12/2023</p>\r
+            </div>\r
+            <div class="bg-blue-50 p-3 rounded-lg">\r
+              <p class="text-sm text-gray-500">A1C</p>\r
+              <p class="text-2xl font-bold">6.2%</p>\r
+              <p class="text-xs text-gray-500">Last: 06/12/2023</p>\r
+            </div>\r
+          </div>\r
+          <button (click)="addNewVitalStatistic()"\r
+            class="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg">\r
+            <i class="fas fa-plus mr-1"></i> Record New Vitals\r
+          </button>\r
+        </div>\r
+      </div>\r
+\r
+      <!-- Immunizations -->\r
+      <div class="bg-white rounded-xl shadow-md overflow-hidden">\r
+        <div class="p-6">\r
+          <div class="flex justify-between items-center mb-4">\r
+            <h3 class="text-xl font-semibold text-gray-800">Immunizations</h3>\r
+            <button (click)="addNewImmunization()" class="text-blue-600 hover:text-blue-800">\r
+              <i class="fas fa-plus mr-1"></i> Add\r
+            </button>\r
+          </div>\r
+          <div class="space-y-3">\r
+            <div class="flex justify-between items-center p-3 bg-green-50 rounded-lg">\r
+              <div>\r
+                <p class="font-medium">COVID-19 Vaccine</p>\r
+                <p class="text-sm text-gray-600">Moderna, Booster</p>\r
+              </div>\r
+              <div class="text-sm text-gray-500">10/15/2022</div>\r
+            </div>\r
+            <div class="flex justify-between items-center p-3 bg-green-50 rounded-lg">\r
+              <div>\r
+                <p class="font-medium">Influenza Vaccine</p>\r
+                <p class="text-sm text-gray-600">Seasonal 2022-2023</p>\r
+              </div>\r
+              <div class="text-sm text-gray-500">09/28/2022</div>\r
+            </div>\r
+            <div class="flex justify-between items-center p-3 bg-green-50 rounded-lg">\r
+              <div>\r
+                <p class="font-medium">Tetanus Booster</p>\r
+                <p class="text-sm text-gray-600">Tdap</p>\r
+              </div>\r
+              <div class="text-sm text-gray-500">05/10/2020</div>\r
+            </div>\r
+          </div>\r
+        </div>\r
+      </div>\r
+\r
+      <!-- Family History -->\r
+      <div class="bg-white rounded-xl shadow-md overflow-hidden">\r
+        <div class="p-6">\r
+          <div class="flex justify-between items-center mb-4">\r
+            <h3 class="text-xl font-semibold text-gray-800">Family History</h3>\r
+            <button (click)="addNewFamilyHistory()" class="text-blue-600 hover:text-blue-800">\r
+              <i class="fas fa-plus mr-1"></i> Add\r
+            </button>\r
+          </div>\r
+          <div class="space-y-3">\r
+            <div class="p-3 bg-purple-50 rounded-lg">\r
+              <p class="font-medium">Father</p>\r
+              <p class="text-sm text-gray-600">Type 2 Diabetes, Heart Disease (died at 68)</p>\r
+            </div>\r
+            <div class="p-3 bg-purple-50 rounded-lg">\r
+              <p class="font-medium">Mother</p>\r
+              <p class="text-sm text-gray-600">Hypertension, Osteoporosis</p>\r
+            </div>\r
+            <div class="p-3 bg-purple-50 rounded-lg">\r
+              <p class="font-medium">Sibling</p>\r
+              <p class="text-sm text-gray-600">Brother - Asthma</p>\r
+            </div>\r
+          </div>\r
+        </div>\r
+      </div>\r
+    </div>\r
+  </div>\r
+</div>\r
+\r
+<app-new-allergies></app-new-allergies>\r
+<app-new-vital-statistic></app-new-vital-statistic>\r
+<app-new-immunization></app-new-immunization>\r
+<app-new-family-history></app-new-family-history>\r
+<app-new-medical-condition></app-new-medical-condition>\r
+<app-new-current-medication></app-new-current-medication>\r
+` }]
+  }], () => [{ type: ShareDataService }, { type: Router }], null);
+})();
+(() => {
+  (typeof ngDevMode === "undefined" || ngDevMode) && \u0275setClassDebugInfo(NewMedicalHistoryComponent, { className: "NewMedicalHistoryComponent", filePath: "src/app/patient/new-medical-history/new-medical-history.component.ts", lineNumber: 19 });
+})();
+
+// src/app/patient/new-patient/new-patient.component.ts
+var NewPatientComponent = class _NewPatientComponent {
+  router;
+  constructor(router) {
+    this.router = router;
+  }
+  navigateToNewMedicalHistory() {
+    this.router.navigate(["/home/new-medical-history"]);
+  }
+  static \u0275fac = function NewPatientComponent_Factory(__ngFactoryType__) {
+    return new (__ngFactoryType__ || _NewPatientComponent)(\u0275\u0275directiveInject(Router));
+  };
+  static \u0275cmp = /* @__PURE__ */ \u0275\u0275defineComponent({ type: _NewPatientComponent, selectors: [["app-new-patient"]], decls: 173, vars: 0, consts: [[1, "flex", "h-screen", "overflow-hidden"], [1, "flex", "flex-col", "flex-1", "overflow-hidden"], [1, "flex", "items-center", "justify-between", "px-6", "py-4", "bg-white", "border-b", "border-gray-200"], [1, "flex", "items-center"], [1, "md:hidden", "mr-4", "text-gray-500"], [1, "fas", "fa-bars"], [1, "text-xl", "font-semibold", "text-gray-800"], [1, "flex", "items-center", "space-x-4"], [1, "p-2", "text-gray-500", "rounded-full", "hover:bg-gray-100"], [1, "fas", "fa-question-circle"], [1, "flex-1", "overflow-y-auto", "p-6", "bg-gray-100"], [1, "max-w-4xl", "mx-auto"], [1, "mb-8"], [1, "flex", "items-center", "justify-center"], [1, "flex", "items-center", "space-x-8"], [1, "flex", "items-center", "space-x-3"], [1, "flex", "items-center", "justify-center", "w-8", "h-8", "rounded-full", "bg-blue-600", "text-white"], [1, "font-medium", "text-blue-600"], [1, "flex", "items-center", "justify-center", "w-8", "h-8", "rounded-full", "bg-gray-200", "text-gray-600"], [1, "font-medium", "text-gray-500"], [1, "bg-white", "rounded-lg", "shadow", "overflow-hidden"], [1, "p-8"], [1, "text-2xl", "font-bold", "text-gray-800", "mb-6"], [1, "block", "text-sm", "font-medium", "text-gray-700", "mb-2"], [1, "flex-shrink-0", "h-24", "w-24", "rounded-full", "bg-gray-200", "flex", "items-center", "justify-center", "overflow-hidden"], [1, "fas", "fa-user", "text-gray-400", "text-3xl"], [1, "ml-6"], [1, "cursor-pointer"], [1, "inline-flex", "items-center", "px-4", "py-2", "border", "border-gray-300", "shadow-sm", "text-sm", "font-medium", "rounded-md", "text-gray-700", "bg-white", "hover:bg-gray-50", "focus:outline-none", "focus:ring-2", "focus:ring-offset-2", "focus:ring-blue-500"], [1, "fas", "fa-upload", "mr-2"], ["type", "file", "accept", "image/*", 1, "sr-only"], [1, "mt-2", "text-xs", "text-gray-500"], [1, "space-y-6"], [1, "grid", "grid-cols-1", "md:grid-cols-3", "gap-6"], ["for", "first-name", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "text", "id", "first-name", 1, "block", "w-full", "border", "border-gray-300", "rounded-md", "shadow-sm", "py-2", "px-3", "focus:outline-none", "focus:ring-blue-500", "focus:border-blue-500", "sm:text-sm"], ["for", "last-name", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "text", "id", "last-name", 1, "block", "w-full", "border", "border-gray-300", "rounded-md", "shadow-sm", "py-2", "px-3", "focus:outline-none", "focus:ring-blue-500", "focus:border-blue-500", "sm:text-sm"], ["for", "CIN", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["for", "gender", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["id", "gender", 1, "block", "w-full", "pl-3", "pr-10", "py-2", "text-base", "border-gray-300", "focus:outline-none", "focus:ring-blue-500", "focus:border-blue-500", "sm:text-sm", "rounded-md"], ["value", ""], ["value", "male"], ["value", "female"], ["value", "other"], ["value", "undisclosed"], ["for", "dob", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "date", "id", "dob", 1, "block", "w-full", "border", "border-gray-300", "rounded-md", "shadow-sm", "py-2", "px-3", "focus:outline-none", "focus:ring-blue-500", "focus:border-blue-500", "sm:text-sm"], ["for", "blood-type", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["id", "blood-type", 1, "block", "w-full", "pl-3", "pr-10", "py-2", "text-base", "border-gray-300", "focus:outline-none", "focus:ring-blue-500", "focus:border-blue-500", "sm:text-sm", "rounded-md"], ["value", "A+"], ["value", "A-"], ["value", "B+"], ["value", "B-"], ["value", "AB+"], ["value", "AB-"], ["value", "O+"], ["value", "O-"], ["for", "email", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "email", "id", "email", 1, "block", "w-full", "border", "border-gray-300", "rounded-md", "shadow-sm", "py-2", "px-3", "focus:outline-none", "focus:ring-blue-500", "focus:border-blue-500", "sm:text-sm"], [1, "grid", "grid-cols-1", "md:grid-cols-2", "gap-6"], ["for", "phone", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "tel", "id", "phone", 1, "block", "w-full", "border", "border-gray-300", "rounded-md", "shadow-sm", "py-2", "px-3", "focus:outline-none", "focus:ring-blue-500", "focus:border-blue-500", "sm:text-sm"], ["for", "mobile", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "tel", "id", "mobile", 1, "block", "w-full", "border", "border-gray-300", "rounded-md", "shadow-sm", "py-2", "px-3", "focus:outline-none", "focus:ring-blue-500", "focus:border-blue-500", "sm:text-sm"], ["for", "address", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "text", "id", "address", 1, "block", "w-full", "border", "border-gray-300", "rounded-md", "shadow-sm", "py-2", "px-3", "focus:outline-none", "focus:ring-blue-500", "focus:border-blue-500", "sm:text-sm"], ["for", "city", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "text", "id", "city", 1, "block", "w-full", "border", "border-gray-300", "rounded-md", "shadow-sm", "py-2", "px-3", "focus:outline-none", "focus:ring-blue-500", "focus:border-blue-500", "sm:text-sm"], ["for", "state", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "text", "id", "state", 1, "block", "w-full", "border", "border-gray-300", "rounded-md", "shadow-sm", "py-2", "px-3", "focus:outline-none", "focus:ring-blue-500", "focus:border-blue-500", "sm:text-sm"], ["for", "zip", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "text", "id", "zip", 1, "block", "w-full", "border", "border-gray-300", "rounded-md", "shadow-sm", "py-2", "px-3", "focus:outline-none", "focus:ring-blue-500", "focus:border-blue-500", "sm:text-sm"], ["for", "country", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["id", "country", 1, "block", "w-full", "pl-3", "pr-10", "py-2", "text-base", "border-gray-300", "focus:outline-none", "focus:ring-blue-500", "focus:border-blue-500", "sm:text-sm", "rounded-md"], ["value", "US"], ["value", "CA"], ["value", "UK"], [1, "pt-4", "border-t", "border-gray-200"], [1, "text-lg", "font-medium", "text-gray-900", "mb-4"], ["for", "emergency-name", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "text", "id", "emergency-name", 1, "block", "w-full", "border", "border-gray-300", "rounded-md", "shadow-sm", "py-2", "px-3", "focus:outline-none", "focus:ring-blue-500", "focus:border-blue-500", "sm:text-sm"], ["for", "emergency-relation", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "text", "id", "emergency-relation", 1, "block", "w-full", "border", "border-gray-300", "rounded-md", "shadow-sm", "py-2", "px-3", "focus:outline-none", "focus:ring-blue-500", "focus:border-blue-500", "sm:text-sm"], [1, "grid", "grid-cols-1", "md:grid-cols-2", "gap-6", "mt-6"], ["for", "emergency-phone", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "tel", "id", "emergency-phone", 1, "block", "w-full", "border", "border-gray-300", "rounded-md", "shadow-sm", "py-2", "px-3", "focus:outline-none", "focus:ring-blue-500", "focus:border-blue-500", "sm:text-sm"], ["for", "emergency-email", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "email", "id", "emergency-email", 1, "block", "w-full", "border", "border-gray-300", "rounded-md", "shadow-sm", "py-2", "px-3", "focus:outline-none", "focus:ring-blue-500", "focus:border-blue-500", "sm:text-sm"], [1, "flex", "justify-end", "pt-6", "border-t", "border-gray-200", "space-x-3"], ["type", "button", 1, "px-4", "py-2", "border", "border-gray-300", "rounded-lg", "text-sm", "font-medium", "text-gray-700", "bg-white", "hover:bg-gray-50", "focus:outline-none", "focus:ring-2", "focus:ring-offset-2", "focus:ring-blue-500"], ["type", "button", 1, "px-4", "py-2", "border", "border-transparent", "rounded-lg", "text-sm", "font-medium", "text-white", "bg-blue-600", "hover:bg-blue-700", "focus:outline-none", "focus:ring-2", "focus:ring-offset-2", "focus:ring-blue-500", 3, "click"], [1, "fas", "fa-arrow-right", "ml-2"]], template: function NewPatientComponent_Template(rf, ctx) {
+    if (rf & 1) {
+      \u0275\u0275elementStart(0, "div", 0)(1, "div", 1)(2, "header", 2)(3, "div", 3)(4, "button", 4);
+      \u0275\u0275element(5, "i", 5);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(6, "h1", 6);
+      \u0275\u0275text(7, "Add New Patient");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(8, "div", 7)(9, "button", 8);
+      \u0275\u0275element(10, "i", 9);
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(11, "main", 10)(12, "div", 11)(13, "div", 12)(14, "nav", 13)(15, "ol", 14)(16, "li", 15)(17, "div", 16);
+      \u0275\u0275text(18, " 1 ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(19, "span", 17);
+      \u0275\u0275text(20, "Personal Information");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(21, "li", 15)(22, "div", 18);
+      \u0275\u0275text(23, " 2 ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(24, "span", 19);
+      \u0275\u0275text(25, "Medical History");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(26, "li", 15)(27, "div", 18);
+      \u0275\u0275text(28, " 3 ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(29, "span", 19);
+      \u0275\u0275text(30, "Confirmation");
+      \u0275\u0275elementEnd()()()()();
+      \u0275\u0275elementStart(31, "div", 20)(32, "div", 21)(33, "h2", 22);
+      \u0275\u0275text(34, "Patient Personal Information");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(35, "div", 12)(36, "label", 23);
+      \u0275\u0275text(37, "Patient Photo");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(38, "div", 3)(39, "div", 24);
+      \u0275\u0275element(40, "i", 25);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(41, "div", 26)(42, "label", 27)(43, "span", 28);
+      \u0275\u0275element(44, "i", 29);
+      \u0275\u0275text(45, " Upload Photo ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(46, "input", 30);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(47, "p", 31);
+      \u0275\u0275text(48, "JPG, PNG or GIF (Max 2MB)");
+      \u0275\u0275elementEnd()()()();
+      \u0275\u0275elementStart(49, "form", 32)(50, "div", 33)(51, "div")(52, "label", 34);
+      \u0275\u0275text(53, "First Name *");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(54, "input", 35);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(55, "div")(56, "label", 36);
+      \u0275\u0275text(57, "Last Name *");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(58, "input", 37);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(59, "div")(60, "label", 38);
+      \u0275\u0275text(61, "CIN *");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(62, "input", 37);
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(63, "div", 33)(64, "div")(65, "label", 39);
+      \u0275\u0275text(66, "Gender *");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(67, "select", 40)(68, "option", 41);
+      \u0275\u0275text(69, "Select Gender");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(70, "option", 42);
+      \u0275\u0275text(71, "Male");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(72, "option", 43);
+      \u0275\u0275text(73, "Female");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(74, "option", 44);
+      \u0275\u0275text(75, "Other");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(76, "option", 45);
+      \u0275\u0275text(77, "Prefer not to say");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(78, "div")(79, "label", 46);
+      \u0275\u0275text(80, "Date of Birth *");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(81, "input", 47);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(82, "div")(83, "label", 48);
+      \u0275\u0275text(84, "Blood Type");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(85, "select", 49)(86, "option", 41);
+      \u0275\u0275text(87, "Unknown");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(88, "option", 50);
+      \u0275\u0275text(89, "A+");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(90, "option", 51);
+      \u0275\u0275text(91, "A-");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(92, "option", 52);
+      \u0275\u0275text(93, "B+");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(94, "option", 53);
+      \u0275\u0275text(95, "B-");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(96, "option", 54);
+      \u0275\u0275text(97, "AB+");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(98, "option", 55);
+      \u0275\u0275text(99, "AB-");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(100, "option", 56);
+      \u0275\u0275text(101, "O+");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(102, "option", 57);
+      \u0275\u0275text(103, "O-");
+      \u0275\u0275elementEnd()()()();
+      \u0275\u0275elementStart(104, "div")(105, "label", 58);
+      \u0275\u0275text(106, "Email Address *");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(107, "input", 59);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(108, "div", 60)(109, "div")(110, "label", 61);
+      \u0275\u0275text(111, "Phone Number *");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(112, "input", 62);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(113, "div")(114, "label", 63);
+      \u0275\u0275text(115, "Mobile Number");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(116, "input", 64);
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(117, "div")(118, "label", 65);
+      \u0275\u0275text(119, "Street Address *");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(120, "input", 66);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(121, "div", 33)(122, "div")(123, "label", 67);
+      \u0275\u0275text(124, "City *");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(125, "input", 68);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(126, "div")(127, "label", 69);
+      \u0275\u0275text(128, "State/Province *");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(129, "input", 70);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(130, "div")(131, "label", 71);
+      \u0275\u0275text(132, "ZIP/Postal Code *");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(133, "input", 72);
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(134, "div")(135, "label", 73);
+      \u0275\u0275text(136, "Country *");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(137, "select", 74)(138, "option", 41);
+      \u0275\u0275text(139, "Select Country");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(140, "option", 75);
+      \u0275\u0275text(141, "United States");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(142, "option", 76);
+      \u0275\u0275text(143, "Canada");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(144, "option", 77);
+      \u0275\u0275text(145, "United Kingdom");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(146, "div", 78)(147, "h3", 79);
+      \u0275\u0275text(148, "Emergency Contact");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(149, "div", 60)(150, "div")(151, "label", 80);
+      \u0275\u0275text(152, "Full Name *");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(153, "input", 81);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(154, "div")(155, "label", 82);
+      \u0275\u0275text(156, "Relationship *");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(157, "input", 83);
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(158, "div", 84)(159, "div")(160, "label", 85);
+      \u0275\u0275text(161, "Phone Number *");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(162, "input", 86);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(163, "div")(164, "label", 87);
+      \u0275\u0275text(165, "Email Address");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(166, "input", 88);
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(167, "div", 89)(168, "button", 90);
+      \u0275\u0275text(169, " Cancel ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(170, "button", 91);
+      \u0275\u0275listener("click", function NewPatientComponent_Template_button_click_170_listener() {
+        return ctx.navigateToNewMedicalHistory();
+      });
+      \u0275\u0275text(171, " Next: Medical History ");
+      \u0275\u0275element(172, "i", 92);
+      \u0275\u0275elementEnd()()()()()()()()();
+    }
+  }, encapsulation: 2 });
+};
+(() => {
+  (typeof ngDevMode === "undefined" || ngDevMode) && setClassMetadata(NewPatientComponent, [{
+    type: Component,
+    args: [{ selector: "app-new-patient", imports: [], template: '\r\n    <div class="flex h-screen overflow-hidden">\r\n\r\n        <!-- Main Content -->\r\n        <div class="flex flex-col flex-1 overflow-hidden">\r\n            <!-- Top Navigation -->\r\n            <header class="flex items-center justify-between px-6 py-4 bg-white border-b border-gray-200">\r\n                <div class="flex items-center">\r\n                    <button class="md:hidden mr-4 text-gray-500">\r\n                        <i class="fas fa-bars"></i>\r\n                    </button>\r\n                    <h1 class="text-xl font-semibold text-gray-800">Add New Patient</h1>\r\n                </div>\r\n                <div class="flex items-center space-x-4">\r\n                    <button class="p-2 text-gray-500 rounded-full hover:bg-gray-100">\r\n                        <i class="fas fa-question-circle"></i>\r\n                    </button>\r\n                </div>\r\n            </header>\r\n\r\n            <!-- Main Content Area -->\r\n            <main class="flex-1 overflow-y-auto p-6 bg-gray-100">\r\n                <div class="max-w-4xl mx-auto">\r\n                    <!-- Progress Steps -->\r\n                    <div class="mb-8">\r\n                        <nav class="flex items-center justify-center">\r\n                            <ol class="flex items-center space-x-8">\r\n                                <li class="flex items-center space-x-3">\r\n                                    <div class="flex items-center justify-center w-8 h-8 rounded-full bg-blue-600 text-white">\r\n                                        1\r\n                                    </div>\r\n                                    <span class="font-medium text-blue-600">Personal Information</span>\r\n                                </li>\r\n                                <li class="flex items-center space-x-3">\r\n                                    <div class="flex items-center justify-center w-8 h-8 rounded-full bg-gray-200 text-gray-600">\r\n                                        2\r\n                                    </div>\r\n                                    <span class="font-medium text-gray-500">Medical History</span>\r\n                                </li>\r\n                                <li class="flex items-center space-x-3">\r\n                                    <div class="flex items-center justify-center w-8 h-8 rounded-full bg-gray-200 text-gray-600">\r\n                                        3\r\n                                    </div>\r\n                                    <span class="font-medium text-gray-500">Confirmation</span>\r\n                                </li>\r\n                            </ol>\r\n                        </nav>\r\n                    </div>\r\n\r\n                    <!-- Form Container -->\r\n                    <div class="bg-white rounded-lg shadow overflow-hidden">\r\n                        <div class="p-8">\r\n                            <h2 class="text-2xl font-bold text-gray-800 mb-6">Patient Personal Information</h2>\r\n\r\n                            <!-- Photo Upload -->\r\n                            <div class="mb-8">\r\n                                <label class="block text-sm font-medium text-gray-700 mb-2">Patient Photo</label>\r\n                                <div class="flex items-center">\r\n                                    <div class="flex-shrink-0 h-24 w-24 rounded-full bg-gray-200 flex items-center justify-center overflow-hidden">\r\n                                        <i class="fas fa-user text-gray-400 text-3xl"></i>\r\n                                    </div>\r\n                                    <div class="ml-6">\r\n                                        <label class="cursor-pointer">\r\n                                            <span class="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">\r\n                                                <i class="fas fa-upload mr-2"></i> Upload Photo\r\n                                            </span>\r\n                                            <input type="file" class="sr-only" accept="image/*">\r\n                                        </label>\r\n                                        <p class="mt-2 text-xs text-gray-500">JPG, PNG or GIF (Max 2MB)</p>\r\n                                    </div>\r\n                                </div>\r\n                            </div>\r\n\r\n                            <!-- Personal Information Form -->\r\n                            <form class="space-y-6">\r\n                                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">\r\n                                    <div>\r\n                                        <label for="first-name" class="block text-sm font-medium text-gray-700 mb-1">First Name *</label>\r\n                                        <input type="text" id="first-name" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r\n                                    </div>\r\n                                    <div>\r\n                                        <label for="last-name" class="block text-sm font-medium text-gray-700 mb-1">Last Name *</label>\r\n                                        <input type="text" id="last-name" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r\n                                    </div>\r\n                                    <div>\r\n                                      <label for="CIN" class="block text-sm font-medium text-gray-700 mb-1">CIN *</label>\r\n                                      <input type="text" id="last-name" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r\n                                  </div>\r\n                                </div>\r\n\r\n                                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">\r\n                                    <div>\r\n                                        <label for="gender" class="block text-sm font-medium text-gray-700 mb-1">Gender *</label>\r\n                                        <select id="gender" class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">\r\n                                            <option value="">Select Gender</option>\r\n                                            <option value="male">Male</option>\r\n                                            <option value="female">Female</option>\r\n                                            <option value="other">Other</option>\r\n                                            <option value="undisclosed">Prefer not to say</option>\r\n                                        </select>\r\n                                    </div>\r\n                                    <div>\r\n                                        <label for="dob" class="block text-sm font-medium text-gray-700 mb-1">Date of Birth *</label>\r\n                                        <input type="date" id="dob" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r\n                                    </div>\r\n                                    <div>\r\n                                        <label for="blood-type" class="block text-sm font-medium text-gray-700 mb-1">Blood Type</label>\r\n                                        <select id="blood-type" class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">\r\n                                            <option value="">Unknown</option>\r\n                                            <option value="A+">A+</option>\r\n                                            <option value="A-">A-</option>\r\n                                            <option value="B+">B+</option>\r\n                                            <option value="B-">B-</option>\r\n                                            <option value="AB+">AB+</option>\r\n                                            <option value="AB-">AB-</option>\r\n                                            <option value="O+">O+</option>\r\n                                            <option value="O-">O-</option>\r\n                                        </select>\r\n                                    </div>\r\n                                </div>\r\n\r\n                                <div>\r\n                                    <label for="email" class="block text-sm font-medium text-gray-700 mb-1">Email Address *</label>\r\n                                    <input type="email" id="email" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r\n                                </div>\r\n\r\n                                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">\r\n                                    <div>\r\n                                        <label for="phone" class="block text-sm font-medium text-gray-700 mb-1">Phone Number *</label>\r\n                                        <input type="tel" id="phone" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r\n                                    </div>\r\n                                    <div>\r\n                                        <label for="mobile" class="block text-sm font-medium text-gray-700 mb-1">Mobile Number</label>\r\n                                        <input type="tel" id="mobile" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r\n                                    </div>\r\n                                </div>\r\n\r\n                                <div>\r\n                                    <label for="address" class="block text-sm font-medium text-gray-700 mb-1">Street Address *</label>\r\n                                    <input type="text" id="address" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r\n                                </div>\r\n\r\n                                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">\r\n                                    <div>\r\n                                        <label for="city" class="block text-sm font-medium text-gray-700 mb-1">City *</label>\r\n                                        <input type="text" id="city" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r\n                                    </div>\r\n                                    <div>\r\n                                        <label for="state" class="block text-sm font-medium text-gray-700 mb-1">State/Province *</label>\r\n                                        <input type="text" id="state" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r\n                                    </div>\r\n                                    <div>\r\n                                        <label for="zip" class="block text-sm font-medium text-gray-700 mb-1">ZIP/Postal Code *</label>\r\n                                        <input type="text" id="zip" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r\n                                    </div>\r\n                                </div>\r\n\r\n                                <div>\r\n                                    <label for="country" class="block text-sm font-medium text-gray-700 mb-1">Country *</label>\r\n                                    <select id="country" class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">\r\n                                        <option value="">Select Country</option>\r\n                                        <option value="US">United States</option>\r\n                                        <option value="CA">Canada</option>\r\n                                        <option value="UK">United Kingdom</option>\r\n                                        <!-- More countries would be added here -->\r\n                                    </select>\r\n                                </div>\r\n\r\n                                <div class="pt-4 border-t border-gray-200">\r\n                                    <h3 class="text-lg font-medium text-gray-900 mb-4">Emergency Contact</h3>\r\n                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">\r\n                                        <div>\r\n                                            <label for="emergency-name" class="block text-sm font-medium text-gray-700 mb-1">Full Name *</label>\r\n                                            <input type="text" id="emergency-name" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r\n                                        </div>\r\n                                        <div>\r\n                                            <label for="emergency-relation" class="block text-sm font-medium text-gray-700 mb-1">Relationship *</label>\r\n                                            <input type="text" id="emergency-relation" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r\n                                        </div>\r\n                                    </div>\r\n                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">\r\n                                        <div>\r\n                                            <label for="emergency-phone" class="block text-sm font-medium text-gray-700 mb-1">Phone Number *</label>\r\n                                            <input type="tel" id="emergency-phone" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r\n                                        </div>\r\n                                        <div>\r\n                                            <label for="emergency-email" class="block text-sm font-medium text-gray-700 mb-1">Email Address</label>\r\n                                            <input type="email" id="emergency-email" class="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r\n                                        </div>\r\n                                    </div>\r\n                                </div>\r\n\r\n                                <div class="flex justify-end pt-6 border-t border-gray-200 space-x-3">\r\n                                    <button type="button" class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">\r\n                                        Cancel\r\n                                    </button>\r\n                                    <button type="button" (click)="navigateToNewMedicalHistory()" class="px-4 py-2 border border-transparent rounded-lg text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">\r\n                                        Next: Medical History <i class="fas fa-arrow-right ml-2"></i>\r\n                                    </button>\r\n                                </div>\r\n                            </form>\r\n                        </div>\r\n                    </div>\r\n                </div>\r\n            </main>\r\n        </div>\r\n    </div>\r\n' }]
+  }], () => [{ type: Router }], null);
+})();
+(() => {
+  (typeof ngDevMode === "undefined" || ngDevMode) && \u0275setClassDebugInfo(NewPatientComponent, { className: "NewPatientComponent", filePath: "src/app/patient/new-patient/new-patient.component.ts", lineNumber: 11 });
+})();
+
 // node_modules/@angular/forms/fesm2022/forms.mjs
 var BaseControlValueAccessor = class _BaseControlValueAccessor {
   _renderer;
@@ -50698,284 +53431,6 @@ function lengthOrSize(value) {
 var NG_VALIDATORS = new InjectionToken(ngDevMode ? "NgValidators" : "");
 var NG_ASYNC_VALIDATORS = new InjectionToken(ngDevMode ? "NgAsyncValidators" : "");
 var EMAIL_REGEXP = /^(?=.{1,254}$)(?=.{1,64}@)[a-zA-Z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-zA-Z0-9!#$%&'*+/=?^_`{|}~-]+)*@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
-var Validators = class {
-  /**
-   * @description
-   * Validator that requires the control's value to be greater than or equal to the provided number.
-   *
-   * @usageNotes
-   *
-   * ### Validate against a minimum of 3
-   *
-   * ```ts
-   * const control = new FormControl(2, Validators.min(3));
-   *
-   * console.log(control.errors); // {min: {min: 3, actual: 2}}
-   * ```
-   *
-   * @returns A validator function that returns an error map with the
-   * `min` property if the validation check fails, otherwise `null`.
-   *
-   * @see {@link /api/forms/AbstractControl#updateValueAndValidity updateValueAndValidity}
-   *
-   */
-  static min(min2) {
-    return minValidator(min2);
-  }
-  /**
-   * @description
-   * Validator that requires the control's value to be less than or equal to the provided number.
-   *
-   * @usageNotes
-   *
-   * ### Validate against a maximum of 15
-   *
-   * ```ts
-   * const control = new FormControl(16, Validators.max(15));
-   *
-   * console.log(control.errors); // {max: {max: 15, actual: 16}}
-   * ```
-   *
-   * @returns A validator function that returns an error map with the
-   * `max` property if the validation check fails, otherwise `null`.
-   *
-   * @see {@link /api/forms/AbstractControl#updateValueAndValidity updateValueAndValidity}
-   *
-   */
-  static max(max2) {
-    return maxValidator(max2);
-  }
-  /**
-   * @description
-   * Validator that requires the control have a non-empty value.
-   *
-   * @usageNotes
-   *
-   * ### Validate that the field is non-empty
-   *
-   * ```ts
-   * const control = new FormControl('', Validators.required);
-   *
-   * console.log(control.errors); // {required: true}
-   * ```
-   *
-   * @returns An error map with the `required` property
-   * if the validation check fails, otherwise `null`.
-   *
-   * @see {@link /api/forms/AbstractControl#updateValueAndValidity updateValueAndValidity}
-   *
-   */
-  static required(control) {
-    return requiredValidator(control);
-  }
-  /**
-   * @description
-   * Validator that requires the control's value be true. This validator is commonly
-   * used for required checkboxes.
-   *
-   * @usageNotes
-   *
-   * ### Validate that the field value is true
-   *
-   * ```ts
-   * const control = new FormControl('some value', Validators.requiredTrue);
-   *
-   * console.log(control.errors); // {required: true}
-   * ```
-   *
-   * @returns An error map that contains the `required` property
-   * set to `true` if the validation check fails, otherwise `null`.
-   *
-   * @see {@link /api/forms/AbstractControl#updateValueAndValidity updateValueAndValidity}
-   *
-   */
-  static requiredTrue(control) {
-    return requiredTrueValidator(control);
-  }
-  /**
-   * @description
-   * Validator that requires the control's value pass an email validation test.
-   *
-   * Tests the value using a [regular
-   * expression](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Regular_Expressions)
-   * pattern suitable for common use cases. The pattern is based on the definition of a valid email
-   * address in the [WHATWG HTML
-   * specification](https://html.spec.whatwg.org/multipage/input.html#valid-e-mail-address) with
-   * some enhancements to incorporate more RFC rules (such as rules related to domain names and the
-   * lengths of different parts of the address).
-   *
-   * The differences from the WHATWG version include:
-   * - Disallow `local-part` (the part before the `@` symbol) to begin or end with a period (`.`).
-   * - Disallow `local-part` to be longer than 64 characters.
-   * - Disallow the whole address to be longer than 254 characters.
-   *
-   * If this pattern does not satisfy your business needs, you can use `Validators.pattern()` to
-   * validate the value against a different pattern.
-   *
-   * @usageNotes
-   *
-   * ### Validate that the field matches a valid email pattern
-   *
-   * ```ts
-   * const control = new FormControl('bad@', Validators.email);
-   *
-   * console.log(control.errors); // {email: true}
-   * ```
-   *
-   * @returns An error map with the `email` property
-   * if the validation check fails, otherwise `null`.
-   *
-   * @see {@link /api/forms/AbstractControl#updateValueAndValidity updateValueAndValidity}
-   *
-   */
-  static email(control) {
-    return emailValidator(control);
-  }
-  /**
-   * @description
-   * Validator that requires the number of items in the control's value to be greater than or equal
-   * to the provided minimum length. This validator is also provided by default if you use
-   * the HTML5 `minlength` attribute. Note that the `minLength` validator is intended to be used
-   * only for types that have a numeric `length` or `size` property, such as strings, arrays or
-   * sets. The `minLength` validator logic is also not invoked for values when their `length` or
-   * `size` property is 0 (for example in case of an empty string or an empty array), to support
-   * optional controls. You can use the standard `required` validator if empty values should not be
-   * considered valid.
-   *
-   * @usageNotes
-   *
-   * ### Validate that the field has a minimum of 3 characters
-   *
-   * ```ts
-   * const control = new FormControl('ng', Validators.minLength(3));
-   *
-   * console.log(control.errors); // {minlength: {requiredLength: 3, actualLength: 2}}
-   * ```
-   *
-   * ```html
-   * <input minlength="5">
-   * ```
-   *
-   * @returns A validator function that returns an error map with the
-   * `minlength` property if the validation check fails, otherwise `null`.
-   *
-   * @see {@link /api/forms/AbstractControl#updateValueAndValidity updateValueAndValidity}
-   *
-   */
-  static minLength(minLength) {
-    return minLengthValidator(minLength);
-  }
-  /**
-   * @description
-   * Validator that requires the number of items in the control's value to be less than or equal
-   * to the provided maximum length. This validator is also provided by default if you use
-   * the HTML5 `maxlength` attribute. Note that the `maxLength` validator is intended to be used
-   * only for types that have a numeric `length` or `size` property, such as strings, arrays or
-   * sets.
-   *
-   * @usageNotes
-   *
-   * ### Validate that the field has maximum of 5 characters
-   *
-   * ```ts
-   * const control = new FormControl('Angular', Validators.maxLength(5));
-   *
-   * console.log(control.errors); // {maxlength: {requiredLength: 5, actualLength: 7}}
-   * ```
-   *
-   * ```html
-   * <input maxlength="5">
-   * ```
-   *
-   * @returns A validator function that returns an error map with the
-   * `maxlength` property if the validation check fails, otherwise `null`.
-   *
-   * @see {@link /api/forms/AbstractControl#updateValueAndValidity updateValueAndValidity}
-   *
-   */
-  static maxLength(maxLength) {
-    return maxLengthValidator(maxLength);
-  }
-  /**
-   * @description
-   * Validator that requires the control's value to match a regex pattern. This validator is also
-   * provided by default if you use the HTML5 `pattern` attribute.
-   *
-   * @usageNotes
-   *
-   * ### Validate that the field only contains letters or spaces
-   *
-   * ```ts
-   * const control = new FormControl('1', Validators.pattern('[a-zA-Z ]*'));
-   *
-   * console.log(control.errors); // {pattern: {requiredPattern: '^[a-zA-Z ]*$', actualValue: '1'}}
-   * ```
-   *
-   * ```html
-   * <input pattern="[a-zA-Z ]*">
-   * ```
-   *
-   * ### Pattern matching with the global or sticky flag
-   *
-   * `RegExp` objects created with the `g` or `y` flags that are passed into `Validators.pattern`
-   * can produce different results on the same input when validations are run consecutively. This is
-   * due to how the behavior of `RegExp.prototype.test` is
-   * specified in [ECMA-262](https://tc39.es/ecma262/#sec-regexpbuiltinexec)
-   * (`RegExp` preserves the index of the last match when the global or sticky flag is used).
-   * Due to this behavior, it is recommended that when using
-   * `Validators.pattern` you **do not** pass in a `RegExp` object with either the global or sticky
-   * flag enabled.
-   *
-   * ```ts
-   * // Not recommended (since the `g` flag is used)
-   * const controlOne = new FormControl('1', Validators.pattern(/foo/g));
-   *
-   * // Good
-   * const controlTwo = new FormControl('1', Validators.pattern(/foo/));
-   * ```
-   *
-   * @param pattern A regular expression to be used as is to test the values, or a string.
-   * If a string is passed, the `^` character is prepended and the `$` character is
-   * appended to the provided string (if not already present), and the resulting regular
-   * expression is used to test the values.
-   *
-   * @returns A validator function that returns an error map with the
-   * `pattern` property if the validation check fails, otherwise `null`.
-   *
-   * @see {@link /api/forms/AbstractControl#updateValueAndValidity updateValueAndValidity}
-   *
-   */
-  static pattern(pattern) {
-    return patternValidator(pattern);
-  }
-  /**
-   * @description
-   * Validator that performs no operation.
-   *
-   * @see {@link /api/forms/AbstractControl#updateValueAndValidity updateValueAndValidity}
-   *
-   */
-  static nullValidator(control) {
-    return nullValidator();
-  }
-  static compose(validators) {
-    return compose(validators);
-  }
-  /**
-   * @description
-   * Compose multiple async validators into a single function that returns the union
-   * of the individual error objects for the provided control.
-   *
-   * @returns A validator function that returns an error map with the
-   * merged error objects of the async validators if the validation check fails, otherwise `null`.
-   *
-   * @see {@link /api/forms/AbstractControl#updateValueAndValidity updateValueAndValidity}
-   *
-   */
-  static composeAsync(validators) {
-    return composeAsync(validators);
-  }
-};
 function minValidator(min2) {
   return (control) => {
     if (control.value == null || min2 == null) {
@@ -57176,376 +59631,684 @@ var ReactiveFormsModule = class _ReactiveFormsModule {
 })();
 
 // src/app/patient/patient/patient.component.ts
+var _c08 = ["newPatientModal"];
 var PatientComponent = class _PatientComponent {
-  fb;
-  patientForm = new FormGroup({});
-  bloodTypes = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
-  genders = ["Male", "Female", "Other", "Prefer not to say"];
-  constructor(fb) {
-    this.fb = fb;
-    this.patientForm = this.fb.group({
-      personalInfo: this.fb.group({
-        firstName: ["", Validators.required],
-        lastName: ["", Validators.required],
-        dob: ["", Validators.required],
-        gender: ["", Validators.required],
-        cin: ["", [Validators.required]]
-      }),
-      contactInfo: this.fb.group({
-        email: ["", [Validators.required, Validators.email]],
-        phone: ["", Validators.required],
-        address: ["", Validators.required],
-        city: ["", Validators.required],
-        state: ["", Validators.required],
-        zipCode: ["", Validators.required]
-      }),
-      medicalInfo: this.fb.group({
-        bloodType: [""],
-        allergies: [""],
-        medications: [""],
-        conditions: [""],
-        insuranceProvider: [""],
-        insuranceId: [""]
-      }),
-      emergencyContact: this.fb.group({
-        name: ["", Validators.required],
-        relationship: ["", Validators.required],
-        phone: ["", Validators.required]
-      })
-    });
+  router;
+  newPatientModalRef;
+  newPatientModal = null;
+  constructor(router) {
+    this.router = router;
   }
-  onSubmit() {
-    if (this.patientForm.valid) {
-      console.log("Form submitted:", this.patientForm.value);
-    } else {
-      this.patientForm.markAllAsTouched();
+  ngAfterViewInit() {
+    let modalOptions = {
+      placement: "center",
+      backdrop: "static",
+      backdropClasses: "bg-gray-900/50 dark:bg-gray-900/80 fixed inset-0 z-40",
+      closable: true,
+      onHide: () => {
+        console.log("modal is hidden");
+      },
+      onShow: () => {
+        console.log("modal is shown");
+      },
+      onToggle: () => {
+        console.log("modal has been toggled");
+      }
+    };
+    const instanceOptions = {
+      id: "modalEl22",
+      override: true
+    };
+    let nnElement = this.newPatientModalRef.nativeElement;
+    this.newPatientModal = new modal_default(nnElement, modalOptions, instanceOptions);
+  }
+  ngOnInit() {
+    initFlowbite();
+  }
+  newPatient() {
+    this.router.navigate(["/home/new-patient"]);
+  }
+  closeModal() {
+    if (this.newPatientModal) {
+      this.newPatientModal.hide();
     }
   }
   static \u0275fac = function PatientComponent_Factory(__ngFactoryType__) {
-    return new (__ngFactoryType__ || _PatientComponent)(\u0275\u0275directiveInject(FormBuilder));
+    return new (__ngFactoryType__ || _PatientComponent)(\u0275\u0275directiveInject(Router));
   };
-  static \u0275cmp = /* @__PURE__ */ \u0275\u0275defineComponent({ type: _PatientComponent, selectors: [["app-patient"]], decls: 285, vars: 0, consts: [[1, "flex", "h-full"], [1, "flex", "flex-col", "flex-1"], [1, "flex", "items-center", "justify-between", "px-6", "py-4", "bg-white", "border-b", "border-gray-200"], [1, "flex", "items-center"], [1, "md:hidden", "mr-4", "text-gray-500"], [1, "fas", "fa-bars"], [1, "text-xl", "font-semibold", "text-gray-800"], [1, "flex", "items-center", "space-x-4"], [1, "p-2", "text-gray-500", "rounded-full", "hover:bg-gray-100"], [1, "fas", "fa-bell"], [1, "relative"], ["type", "text", "placeholder", "Search...", 1, "pl-10", "pr-4", "py-2", "border", "rounded-full", "text-sm", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500"], [1, "fas", "fa-search", "absolute", "left-3", "top-2.5", "text-gray-400"], [1, "flex-1", "overflow-y-auto", "p-6", "bg-gray-100"], [1, "flex", "flex-col", "md:flex-row", "justify-between", "items-start", "md:items-center", "mb-6"], [1, "text-sm", "text-gray-600", "mt-1"], [1, "mt-4", "md:mt-0", "flex", "space-x-3"], ["type", "text", "placeholder", "Search patients...", 1, "pl-10", "pr-4", "py-2", "border", "rounded-lg", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500"], [1, "px-4", "py-2", "bg-blue-600", "text-white", "rounded-lg", "hover:bg-blue-700", "flex", "items-center"], [1, "fas", "fa-plus", "mr-2"], [1, "bg-white", "rounded-lg", "shadow", "p-4", "mb-6"], [1, "flex", "flex-wrap", "items-center", "gap-4"], ["for", "status-filter", 1, "mr-2", "text-sm", "text-gray-600"], ["id", "status-filter", 1, "border", "rounded-lg", "px-2", "py-1", "text-sm", "focus:outline-none", "focus:ring-1", "focus:ring-blue-500"], ["for", "doctor-filter", 1, "mr-2", "text-sm", "text-gray-600"], ["id", "doctor-filter", 1, "border", "rounded-lg", "px-2", "py-1", "text-sm", "focus:outline-none", "focus:ring-1", "focus:ring-blue-500"], ["for", "date-filter", 1, "mr-2", "text-sm", "text-gray-600"], ["id", "date-filter", 1, "border", "rounded-lg", "px-2", "py-1", "text-sm", "focus:outline-none", "focus:ring-1", "focus:ring-blue-500"], [1, "ml-auto", "text-sm", "text-blue-600", "hover:text-blue-800", "flex", "items-center"], [1, "fas", "fa-filter", "mr-1"], [1, "bg-white", "rounded-lg", "shadow", "overflow-hidden"], [1, "overflow-x-auto"], [1, "min-w-full", "divide-y", "divide-gray-200"], [1, "bg-gray-50"], ["scope", "col", 1, "px-6", "py-3", "text-left", "text-xs", "font-medium", "text-gray-500", "uppercase", "tracking-wider"], ["scope", "col", 1, "px-6", "py-3", "text-right", "text-xs", "font-medium", "text-gray-500", "uppercase", "tracking-wider"], [1, "bg-white", "divide-y", "divide-gray-200"], [1, "hover:bg-gray-50"], [1, "px-6", "py-4", "whitespace-nowrap"], [1, "flex-shrink-0", "h-10", "w-10"], ["src", "https://randomuser.me/api/portraits/men/32.jpg", "alt", "", 1, "h-10", "w-10", "rounded-full"], [1, "ml-4"], [1, "text-sm", "font-medium", "text-gray-900"], [1, "text-sm", "text-gray-500"], [1, "text-xs", "text-gray-400"], [1, "text-sm", "text-gray-900"], [1, "px-2", "inline-flex", "text-xs", "leading-5", "font-semibold", "rounded-full", "bg-green-100", "text-green-800"], [1, "px-6", "py-4", "whitespace-nowrap", "text-right", "text-sm", "font-medium"], [1, "text-blue-600", "hover:text-blue-900", "mr-3"], [1, "text-gray-600", "hover:text-gray-900"], ["src", "https://randomuser.me/api/portraits/women/44.jpg", "alt", "", 1, "h-10", "w-10", "rounded-full"], ["src", "https://randomuser.me/api/portraits/men/75.jpg", "alt", "", 1, "h-10", "w-10", "rounded-full"], [1, "px-2", "inline-flex", "text-xs", "leading-5", "font-semibold", "rounded-full", "bg-yellow-100", "text-yellow-800"], ["src", "https://randomuser.me/api/portraits/women/68.jpg", "alt", "", 1, "h-10", "w-10", "rounded-full"], [1, "px-2", "inline-flex", "text-xs", "leading-5", "font-semibold", "rounded-full", "bg-blue-100", "text-blue-800"], ["src", "https://randomuser.me/api/portraits/men/22.jpg", "alt", "", 1, "h-10", "w-10", "rounded-full"], [1, "px-2", "inline-flex", "text-xs", "leading-5", "font-semibold", "rounded-full", "bg-gray-100", "text-gray-800"], [1, "bg-gray-50", "px-6", "py-3", "flex", "items-center", "justify-between", "border-t", "border-gray-200"], [1, "flex-1", "flex", "justify-between", "sm:hidden"], ["href", "#", 1, "relative", "inline-flex", "items-center", "px-4", "py-2", "border", "border-gray-300", "text-sm", "font-medium", "rounded-md", "text-gray-700", "bg-white", "hover:bg-gray-50"], ["href", "#", 1, "ml-3", "relative", "inline-flex", "items-center", "px-4", "py-2", "border", "border-gray-300", "text-sm", "font-medium", "rounded-md", "text-gray-700", "bg-white", "hover:bg-gray-50"], [1, "hidden", "sm:flex-1", "sm:flex", "sm:items-center", "sm:justify-between"], [1, "text-sm", "text-gray-700"], [1, "font-medium"], ["aria-label", "Pagination", 1, "relative", "z-0", "inline-flex", "rounded-md", "shadow-sm", "-space-x-px"], ["href", "#", 1, "relative", "inline-flex", "items-center", "px-2", "py-2", "rounded-l-md", "border", "border-gray-300", "bg-white", "text-sm", "font-medium", "text-gray-500", "hover:bg-gray-50"], [1, "sr-only"], [1, "fas", "fa-chevron-left"], ["href", "#", "aria-current", "page", 1, "z-10", "bg-blue-50", "border-blue-500", "text-blue-600", "relative", "inline-flex", "items-center", "px-4", "py-2", "border", "text-sm", "font-medium"], ["href", "#", 1, "bg-white", "border-gray-300", "text-gray-500", "hover:bg-gray-50", "relative", "inline-flex", "items-center", "px-4", "py-2", "border", "text-sm", "font-medium"], ["href", "#", 1, "relative", "inline-flex", "items-center", "px-2", "py-2", "rounded-r-md", "border", "border-gray-300", "bg-white", "text-sm", "font-medium", "text-gray-500", "hover:bg-gray-50"], [1, "fas", "fa-chevron-right"]], template: function PatientComponent_Template(rf, ctx) {
+  static \u0275cmp = /* @__PURE__ */ \u0275\u0275defineComponent({ type: _PatientComponent, selectors: [["app-patient"]], viewQuery: function PatientComponent_Query(rf, ctx) {
     if (rf & 1) {
-      \u0275\u0275elementStart(0, "div", 0)(1, "div", 1)(2, "header", 2)(3, "div", 3)(4, "button", 4);
-      \u0275\u0275element(5, "i", 5);
+      \u0275\u0275viewQuery(_c08, 5);
+    }
+    if (rf & 2) {
+      let _t;
+      \u0275\u0275queryRefresh(_t = \u0275\u0275loadQuery()) && (ctx.newPatientModalRef = _t.first);
+    }
+  }, decls: 294, vars: 0, consts: [["newPatientModal", ""], [1, "flex", "flex-col", "h-full", "flex-1"], [1, "flex-1", "overflow-y-auto", "p-6", "bg-gray-100"], [1, "flex", "flex-col", "md:flex-row", "justify-between", "items-start", "md:items-center", "mb-6"], [1, "text-xl", "font-semibold", "text-gray-800"], [1, "text-sm", "text-gray-600", "mt-1"], [1, "mt-4", "md:mt-0", "flex", "space-x-3"], [1, "relative"], ["type", "text", "placeholder", "Search patients...", 1, "pl-10", "pr-4", "py-2", "border", "rounded-lg", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500"], [1, "fas", "fa-search", "absolute", "left-3", "top-2.5", "text-gray-400"], [1, "px-4", "py-2", "bg-blue-600", "text-white", "rounded-lg", "hover:bg-blue-700", "flex", "items-center", 3, "click"], [1, "fas", "fa-plus", "mr-2"], [1, "bg-white", "rounded-lg", "shadow", "p-4", "mb-6"], [1, "flex", "flex-wrap", "items-center", "gap-4"], [1, "flex", "items-center"], ["for", "status-filter", 1, "mr-2", "text-sm", "text-gray-600"], ["id", "status-filter", 1, "border", "rounded-lg", "px-2", "py-1", "text-sm", "focus:outline-none", "focus:ring-1", "focus:ring-blue-500"], ["for", "doctor-filter", 1, "mr-2", "text-sm", "text-gray-600"], ["id", "doctor-filter", 1, "border", "rounded-lg", "px-2", "py-1", "text-sm", "focus:outline-none", "focus:ring-1", "focus:ring-blue-500"], ["for", "date-filter", 1, "mr-2", "text-sm", "text-gray-600"], ["id", "date-filter", 1, "border", "rounded-lg", "px-2", "py-1", "text-sm", "focus:outline-none", "focus:ring-1", "focus:ring-blue-500"], [1, "ml-auto", "text-sm", "text-blue-600", "hover:text-blue-800", "flex", "items-center"], [1, "fas", "fa-filter", "mr-1"], [1, "bg-white", "rounded-lg", "shadow", "overflow-hidden"], [1, "overflow-x-auto"], [1, "min-w-full", "divide-y", "divide-gray-200"], [1, "bg-gray-50"], ["scope", "col", 1, "px-6", "py-3", "text-left", "text-xs", "font-medium", "text-gray-500", "uppercase", "tracking-wider"], ["scope", "col", 1, "px-6", "py-3", "text-right", "text-xs", "font-medium", "text-gray-500", "uppercase", "tracking-wider"], [1, "bg-white", "divide-y", "divide-gray-200"], [1, "hover:bg-gray-50"], [1, "px-6", "py-4", "whitespace-nowrap"], [1, "flex-shrink-0", "h-10", "w-10"], ["src", "https://randomuser.me/api/portraits/men/32.jpg", "alt", "", 1, "h-10", "w-10", "rounded-full"], [1, "ml-4"], [1, "text-sm", "font-medium", "text-gray-900"], [1, "text-sm", "text-gray-500"], [1, "text-xs", "text-gray-400"], [1, "text-sm", "text-gray-900"], [1, "px-2", "inline-flex", "text-xs", "leading-5", "font-semibold", "rounded-full", "bg-green-100", "text-green-800"], [1, "px-6", "py-4", "whitespace-nowrap", "text-right", "text-sm", "font-medium"], [1, "text-blue-600", "hover:text-blue-900", "mr-3"], [1, "text-gray-600", "hover:text-gray-900"], ["src", "https://randomuser.me/api/portraits/women/44.jpg", "alt", "", 1, "h-10", "w-10", "rounded-full"], ["src", "https://randomuser.me/api/portraits/men/75.jpg", "alt", "", 1, "h-10", "w-10", "rounded-full"], [1, "px-2", "inline-flex", "text-xs", "leading-5", "font-semibold", "rounded-full", "bg-yellow-100", "text-yellow-800"], ["src", "https://randomuser.me/api/portraits/women/68.jpg", "alt", "", 1, "h-10", "w-10", "rounded-full"], [1, "px-2", "inline-flex", "text-xs", "leading-5", "font-semibold", "rounded-full", "bg-blue-100", "text-blue-800"], ["src", "https://randomuser.me/api/portraits/men/22.jpg", "alt", "", 1, "h-10", "w-10", "rounded-full"], [1, "px-2", "inline-flex", "text-xs", "leading-5", "font-semibold", "rounded-full", "bg-gray-100", "text-gray-800"], [1, "bg-gray-50", "px-6", "py-3", "flex", "items-center", "justify-between", "border-t", "border-gray-200"], [1, "flex-1", "flex", "justify-between", "sm:hidden"], ["href", "#", 1, "relative", "inline-flex", "items-center", "px-4", "py-2", "border", "border-gray-300", "text-sm", "font-medium", "rounded-md", "text-gray-700", "bg-white", "hover:bg-gray-50"], ["href", "#", 1, "ml-3", "relative", "inline-flex", "items-center", "px-4", "py-2", "border", "border-gray-300", "text-sm", "font-medium", "rounded-md", "text-gray-700", "bg-white", "hover:bg-gray-50"], [1, "hidden", "sm:flex-1", "sm:flex", "sm:items-center", "sm:justify-between"], [1, "text-sm", "text-gray-700"], [1, "font-medium"], ["aria-label", "Pagination", 1, "relative", "z-0", "inline-flex", "rounded-md", "shadow-sm", "-space-x-px"], ["href", "#", 1, "relative", "inline-flex", "items-center", "px-2", "py-2", "rounded-l-md", "border", "border-gray-300", "bg-white", "text-sm", "font-medium", "text-gray-500", "hover:bg-gray-50"], [1, "sr-only"], [1, "fas", "fa-chevron-left"], ["href", "#", "aria-current", "page", 1, "z-10", "bg-blue-50", "border-blue-500", "text-blue-600", "relative", "inline-flex", "items-center", "px-4", "py-2", "border", "text-sm", "font-medium"], ["href", "#", 1, "bg-white", "border-gray-300", "text-gray-500", "hover:bg-gray-50", "relative", "inline-flex", "items-center", "px-4", "py-2", "border", "text-sm", "font-medium"], ["href", "#", 1, "relative", "inline-flex", "items-center", "px-2", "py-2", "rounded-r-md", "border", "border-gray-300", "bg-white", "text-sm", "font-medium", "text-gray-500", "hover:bg-gray-50"], [1, "fas", "fa-chevron-right"], ["id", "modalEl", "tabindex", "-1", "aria-hidden", "true", 1, "fixed", "left-0", "right-0", "top-0", "z-50", "hidden", "h-[calc(100%-1rem)]", "max-h-full", "w-full", "overflow-y-auto", "overflow-x-hidden", "p-4", "md:inset-0"], [1, "relative", "max-h-full", "w-full", "max-w-2xl"], [1, "relative", "rounded-lg", "bg-white", "shadow-sm", "dark:bg-gray-700"], [1, "flex", "items-start", "justify-between", "rounded-t", "border-b", "p-5", "dark:border-gray-600"], [1, "text-xl", "font-semibold", "text-gray-900", "dark:text-white", "lg:text-2xl"], ["type", "button", 1, "ms-auto", "inline-flex", "h-8", "w-8", "items-center", "justify-center", "rounded-lg", "bg-transparent", "text-sm", "text-gray-400", "hover:bg-gray-200", "hover:text-gray-900", "dark:hover:bg-gray-600", "dark:hover:text-white", 3, "click"], ["aria-hidden", "true", "xmlns", "http://www.w3.org/2000/svg", "fill", "none", "viewBox", "0 0 14 14", 1, "h-3", "w-3"], ["stroke", "currentColor", "stroke-linecap", "round", "stroke-linejoin", "round", "stroke-width", "2", "d", "m1 1 6 6m0 0 6 6M7 7l6-6M7 7l-6 6"], [1, "space-y-6", "p-6"], [1, "text-base", "leading-relaxed", "text-gray-500", "dark:text-gray-400"], [1, "flex", "items-center", "space-x-2", "rtl:space-x-reverse", "rounded-b", "border-t", "border-gray-200", "p-6", "dark:border-gray-600"], ["type", "button", 1, "rounded-lg", "bg-blue-700", "px-5", "py-2.5", "text-center", "text-sm", "font-medium", "text-white", "hover:bg-blue-800", "focus:outline-none", "focus:ring-4", "focus:ring-blue-300", "dark:bg-blue-600", "dark:hover:bg-blue-700", "dark:focus:ring-blue-800"], ["type", "button", 1, "rounded-lg", "border", "border-gray-200", "bg-white", "px-5", "py-2.5", "text-sm", "font-medium", "text-gray-500", "hover:bg-gray-100", "hover:text-gray-900", "focus:z-10", "focus:outline-none", "focus:ring-4", "focus:ring-blue-300", "dark:border-gray-500", "dark:bg-gray-700", "dark:text-gray-300", "dark:hover:bg-gray-600", "dark:hover:text-white"]], template: function PatientComponent_Template(rf, ctx) {
+    if (rf & 1) {
+      const _r1 = \u0275\u0275getCurrentView();
+      \u0275\u0275elementStart(0, "div", 1)(1, "main", 2)(2, "div", 3)(3, "div")(4, "h2", 4);
+      \u0275\u0275text(5, " All Patients");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(6, "h1", 6);
-      \u0275\u0275text(7, "Patient List");
+      \u0275\u0275elementStart(6, "p", 5);
+      \u0275\u0275text(7, "Manage your patient records and information");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(8, "div", 7)(9, "button", 8);
-      \u0275\u0275element(10, "i", 9);
+      \u0275\u0275elementStart(8, "div", 6)(9, "div", 7);
+      \u0275\u0275element(10, "input", 8)(11, "i", 9);
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(11, "div", 10);
-      \u0275\u0275element(12, "input", 11)(13, "i", 12);
+      \u0275\u0275elementStart(12, "button", 10);
+      \u0275\u0275listener("click", function PatientComponent_Template_button_click_12_listener() {
+        \u0275\u0275restoreView(_r1);
+        return \u0275\u0275resetView(ctx.newPatient());
+      });
+      \u0275\u0275element(13, "i", 11);
+      \u0275\u0275text(14, " New Patient ");
       \u0275\u0275elementEnd()()();
-      \u0275\u0275elementStart(14, "main", 13)(15, "div", 14)(16, "div")(17, "h2", 6);
-      \u0275\u0275text(18, "All Patients");
+      \u0275\u0275elementStart(15, "div", 12)(16, "div", 13)(17, "div", 14)(18, "label", 15);
+      \u0275\u0275text(19, "Status:");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(19, "p", 15);
-      \u0275\u0275text(20, "Manage your patient records and information");
-      \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(21, "div", 16)(22, "div", 10);
-      \u0275\u0275element(23, "input", 17)(24, "i", 12);
+      \u0275\u0275elementStart(20, "select", 16)(21, "option");
+      \u0275\u0275text(22, "All Patients");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(25, "button", 18);
-      \u0275\u0275element(26, "i", 19);
-      \u0275\u0275text(27, " New Patient ");
+      \u0275\u0275elementStart(23, "option");
+      \u0275\u0275text(24, "Active");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(25, "option");
+      \u0275\u0275text(26, "Inactive");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(27, "option");
+      \u0275\u0275text(28, "New");
       \u0275\u0275elementEnd()()();
-      \u0275\u0275elementStart(28, "div", 20)(29, "div", 21)(30, "div", 3)(31, "label", 22);
-      \u0275\u0275text(32, "Status:");
+      \u0275\u0275elementStart(29, "div", 14)(30, "label", 17);
+      \u0275\u0275text(31, "Doctor:");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(33, "select", 23)(34, "option");
-      \u0275\u0275text(35, "All Patients");
+      \u0275\u0275elementStart(32, "select", 18)(33, "option");
+      \u0275\u0275text(34, "All Doctors");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(36, "option");
-      \u0275\u0275text(37, "Active");
+      \u0275\u0275elementStart(35, "option");
+      \u0275\u0275text(36, "Dr. Sarah Johnson");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(38, "option");
-      \u0275\u0275text(39, "Inactive");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(40, "option");
-      \u0275\u0275text(41, "New");
+      \u0275\u0275elementStart(37, "option");
+      \u0275\u0275text(38, "Dr. Michael Chen");
       \u0275\u0275elementEnd()()();
-      \u0275\u0275elementStart(42, "div", 3)(43, "label", 24);
-      \u0275\u0275text(44, "Doctor:");
+      \u0275\u0275elementStart(39, "div", 14)(40, "label", 19);
+      \u0275\u0275text(41, "Last Visit:");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(45, "select", 25)(46, "option");
-      \u0275\u0275text(47, "All Doctors");
+      \u0275\u0275elementStart(42, "select", 20)(43, "option");
+      \u0275\u0275text(44, "Any Time");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(48, "option");
-      \u0275\u0275text(49, "Dr. Sarah Johnson");
+      \u0275\u0275elementStart(45, "option");
+      \u0275\u0275text(46, "Last 30 Days");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(50, "option");
-      \u0275\u0275text(51, "Dr. Michael Chen");
+      \u0275\u0275elementStart(47, "option");
+      \u0275\u0275text(48, "Last 3 Months");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(49, "option");
+      \u0275\u0275text(50, "Last Year");
       \u0275\u0275elementEnd()()();
-      \u0275\u0275elementStart(52, "div", 3)(53, "label", 26);
-      \u0275\u0275text(54, "Last Visit:");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(55, "select", 27)(56, "option");
-      \u0275\u0275text(57, "Any Time");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(58, "option");
-      \u0275\u0275text(59, "Last 30 Days");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(60, "option");
-      \u0275\u0275text(61, "Last 3 Months");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(62, "option");
-      \u0275\u0275text(63, "Last Year");
+      \u0275\u0275elementStart(51, "button", 21);
+      \u0275\u0275element(52, "i", 22);
+      \u0275\u0275text(53, " Advanced Filters ");
       \u0275\u0275elementEnd()()();
-      \u0275\u0275elementStart(64, "button", 28);
-      \u0275\u0275element(65, "i", 29);
-      \u0275\u0275text(66, " Advanced Filters ");
+      \u0275\u0275elementStart(54, "div", 23)(55, "div", 24)(56, "table", 25)(57, "thead", 26)(58, "tr")(59, "th", 27);
+      \u0275\u0275text(60, " Patient");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(61, "th", 27);
+      \u0275\u0275text(62, " Contact");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(63, "th", 27);
+      \u0275\u0275text(64, " Last Visit");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(65, "th", 27);
+      \u0275\u0275text(66, " Status");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(67, "th", 27);
+      \u0275\u0275text(68, " Primary Doctor");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(69, "th", 28);
+      \u0275\u0275text(70, " Actions");
       \u0275\u0275elementEnd()()();
-      \u0275\u0275elementStart(67, "div", 30)(68, "div", 31)(69, "table", 32)(70, "thead", 33)(71, "tr")(72, "th", 34);
-      \u0275\u0275text(73, "Patient");
+      \u0275\u0275elementStart(71, "tbody", 29)(72, "tr", 30)(73, "td", 31)(74, "div", 14)(75, "div", 32);
+      \u0275\u0275element(76, "img", 33);
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(74, "th", 34);
-      \u0275\u0275text(75, "Contact");
+      \u0275\u0275elementStart(77, "div", 34)(78, "div", 35);
+      \u0275\u0275text(79, "John Smith");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(76, "th", 34);
-      \u0275\u0275text(77, "Last Visit");
+      \u0275\u0275elementStart(80, "div", 36);
+      \u0275\u0275text(81, "ID: #PAT-1001");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(78, "th", 34);
-      \u0275\u0275text(79, "Status");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(80, "th", 34);
-      \u0275\u0275text(81, "Primary Doctor");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(82, "th", 35);
-      \u0275\u0275text(83, "Actions");
-      \u0275\u0275elementEnd()()();
-      \u0275\u0275elementStart(84, "tbody", 36)(85, "tr", 37)(86, "td", 38)(87, "div", 3)(88, "div", 39);
-      \u0275\u0275element(89, "img", 40);
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(90, "div", 41)(91, "div", 42);
-      \u0275\u0275text(92, "John Smith");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(93, "div", 43);
-      \u0275\u0275text(94, "ID: #PAT-1001");
-      \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(95, "div", 44);
-      \u0275\u0275text(96, "Male, 42 years");
+      \u0275\u0275elementStart(82, "div", 37);
+      \u0275\u0275text(83, "Male, 42 years");
       \u0275\u0275elementEnd()()()();
-      \u0275\u0275elementStart(97, "td", 38)(98, "div", 45);
-      \u0275\u0275text(99, "john.smith_example.com");
+      \u0275\u0275elementStart(84, "td", 31)(85, "div", 38);
+      \u0275\u0275text(86, "john.smith_example.com");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(100, "div", 43);
-      \u0275\u0275text(101, "(555) 123-4567");
+      \u0275\u0275elementStart(87, "div", 36);
+      \u0275\u0275text(88, "(555) 123-4567");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(102, "td", 38)(103, "div", 45);
-      \u0275\u0275text(104, "Jun 15, 2023");
+      \u0275\u0275elementStart(89, "td", 31)(90, "div", 38);
+      \u0275\u0275text(91, "Jun 15, 2023");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(105, "div", 43);
-      \u0275\u0275text(106, "Follow-up");
+      \u0275\u0275elementStart(92, "div", 36);
+      \u0275\u0275text(93, "Follow-up");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(107, "td", 38)(108, "span", 46);
-      \u0275\u0275text(109, " Active ");
+      \u0275\u0275elementStart(94, "td", 31)(95, "span", 39);
+      \u0275\u0275text(96, " Active ");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(110, "td", 38)(111, "div", 45);
-      \u0275\u0275text(112, "Dr. Sarah Johnson");
+      \u0275\u0275elementStart(97, "td", 31)(98, "div", 38);
+      \u0275\u0275text(99, "Dr. Sarah Johnson");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(113, "td", 47)(114, "button", 48);
-      \u0275\u0275text(115, "View");
+      \u0275\u0275elementStart(100, "td", 40)(101, "button", 41);
+      \u0275\u0275text(102, "View");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(116, "button", 49);
-      \u0275\u0275text(117, "Message");
+      \u0275\u0275elementStart(103, "button", 42);
+      \u0275\u0275text(104, "Message");
       \u0275\u0275elementEnd()()();
-      \u0275\u0275elementStart(118, "tr", 37)(119, "td", 38)(120, "div", 3)(121, "div", 39);
-      \u0275\u0275element(122, "img", 50);
+      \u0275\u0275elementStart(105, "tr", 30)(106, "td", 31)(107, "div", 14)(108, "div", 32);
+      \u0275\u0275element(109, "img", 43);
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(123, "div", 41)(124, "div", 42);
-      \u0275\u0275text(125, "Emily Johnson");
+      \u0275\u0275elementStart(110, "div", 34)(111, "div", 35);
+      \u0275\u0275text(112, "Emily Johnson");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(126, "div", 43);
-      \u0275\u0275text(127, "ID: #PAT-1002");
+      \u0275\u0275elementStart(113, "div", 36);
+      \u0275\u0275text(114, "ID: #PAT-1002");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(128, "div", 44);
-      \u0275\u0275text(129, "Female, 35 years");
+      \u0275\u0275elementStart(115, "div", 37);
+      \u0275\u0275text(116, "Female, 35 years");
       \u0275\u0275elementEnd()()()();
-      \u0275\u0275elementStart(130, "td", 38)(131, "div", 45);
-      \u0275\u0275text(132, "emily.j_example.com");
+      \u0275\u0275elementStart(117, "td", 31)(118, "div", 38);
+      \u0275\u0275text(119, "emily.j_example.com");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(133, "div", 43);
-      \u0275\u0275text(134, "(555) 234-5678");
+      \u0275\u0275elementStart(120, "div", 36);
+      \u0275\u0275text(121, "(555) 234-5678");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(135, "td", 38)(136, "div", 45);
-      \u0275\u0275text(137, "Jun 10, 2023");
+      \u0275\u0275elementStart(122, "td", 31)(123, "div", 38);
+      \u0275\u0275text(124, "Jun 10, 2023");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(138, "div", 43);
-      \u0275\u0275text(139, "Annual Checkup");
+      \u0275\u0275elementStart(125, "div", 36);
+      \u0275\u0275text(126, "Annual Checkup");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(140, "td", 38)(141, "span", 46);
-      \u0275\u0275text(142, " Active ");
+      \u0275\u0275elementStart(127, "td", 31)(128, "span", 39);
+      \u0275\u0275text(129, " Active ");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(143, "td", 38)(144, "div", 45);
-      \u0275\u0275text(145, "Dr. Michael Chen");
+      \u0275\u0275elementStart(130, "td", 31)(131, "div", 38);
+      \u0275\u0275text(132, "Dr. Michael Chen");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(146, "td", 47)(147, "button", 48);
-      \u0275\u0275text(148, "View");
+      \u0275\u0275elementStart(133, "td", 40)(134, "button", 41);
+      \u0275\u0275text(135, "View");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(149, "button", 49);
-      \u0275\u0275text(150, "Message");
+      \u0275\u0275elementStart(136, "button", 42);
+      \u0275\u0275text(137, "Message");
       \u0275\u0275elementEnd()()();
-      \u0275\u0275elementStart(151, "tr", 37)(152, "td", 38)(153, "div", 3)(154, "div", 39);
-      \u0275\u0275element(155, "img", 51);
+      \u0275\u0275elementStart(138, "tr", 30)(139, "td", 31)(140, "div", 14)(141, "div", 32);
+      \u0275\u0275element(142, "img", 44);
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(156, "div", 41)(157, "div", 42);
-      \u0275\u0275text(158, "Michael Brown");
+      \u0275\u0275elementStart(143, "div", 34)(144, "div", 35);
+      \u0275\u0275text(145, "Michael Brown");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(159, "div", 43);
-      \u0275\u0275text(160, "ID: #PAT-1003");
+      \u0275\u0275elementStart(146, "div", 36);
+      \u0275\u0275text(147, "ID: #PAT-1003");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(161, "div", 44);
-      \u0275\u0275text(162, "Male, 58 years");
+      \u0275\u0275elementStart(148, "div", 37);
+      \u0275\u0275text(149, "Male, 58 years");
       \u0275\u0275elementEnd()()()();
-      \u0275\u0275elementStart(163, "td", 38)(164, "div", 45);
-      \u0275\u0275text(165, "michael.b_example.com");
+      \u0275\u0275elementStart(150, "td", 31)(151, "div", 38);
+      \u0275\u0275text(152, "michael.b_example.com");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(166, "div", 43);
-      \u0275\u0275text(167, "(555) 345-6789");
+      \u0275\u0275elementStart(153, "div", 36);
+      \u0275\u0275text(154, "(555) 345-6789");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(168, "td", 38)(169, "div", 45);
-      \u0275\u0275text(170, "May 28, 2023");
+      \u0275\u0275elementStart(155, "td", 31)(156, "div", 38);
+      \u0275\u0275text(157, "May 28, 2023");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(171, "div", 43);
-      \u0275\u0275text(172, "Lab Results");
+      \u0275\u0275elementStart(158, "div", 36);
+      \u0275\u0275text(159, "Lab Results");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(173, "td", 38)(174, "span", 52);
-      \u0275\u0275text(175, " Follow-up Needed ");
+      \u0275\u0275elementStart(160, "td", 31)(161, "span", 45);
+      \u0275\u0275text(162, " Follow-up Needed ");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(176, "td", 38)(177, "div", 45);
-      \u0275\u0275text(178, "Dr. Sarah Johnson");
+      \u0275\u0275elementStart(163, "td", 31)(164, "div", 38);
+      \u0275\u0275text(165, "Dr. Sarah Johnson");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(179, "td", 47)(180, "button", 48);
-      \u0275\u0275text(181, "View");
+      \u0275\u0275elementStart(166, "td", 40)(167, "button", 41);
+      \u0275\u0275text(168, "View");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(182, "button", 49);
-      \u0275\u0275text(183, "Message");
+      \u0275\u0275elementStart(169, "button", 42);
+      \u0275\u0275text(170, "Message");
       \u0275\u0275elementEnd()()();
-      \u0275\u0275elementStart(184, "tr", 37)(185, "td", 38)(186, "div", 3)(187, "div", 39);
-      \u0275\u0275element(188, "img", 53);
+      \u0275\u0275elementStart(171, "tr", 30)(172, "td", 31)(173, "div", 14)(174, "div", 32);
+      \u0275\u0275element(175, "img", 46);
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(189, "div", 41)(190, "div", 42);
-      \u0275\u0275text(191, "Sarah Wilson");
+      \u0275\u0275elementStart(176, "div", 34)(177, "div", 35);
+      \u0275\u0275text(178, "Sarah Wilson");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(192, "div", 43);
-      \u0275\u0275text(193, "ID: #PAT-1004");
+      \u0275\u0275elementStart(179, "div", 36);
+      \u0275\u0275text(180, "ID: #PAT-1004");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(194, "div", 44);
-      \u0275\u0275text(195, "Female, 29 years");
+      \u0275\u0275elementStart(181, "div", 37);
+      \u0275\u0275text(182, "Female, 29 years");
       \u0275\u0275elementEnd()()()();
-      \u0275\u0275elementStart(196, "td", 38)(197, "div", 45);
-      \u0275\u0275text(198, "sarah.w_example.com");
+      \u0275\u0275elementStart(183, "td", 31)(184, "div", 38);
+      \u0275\u0275text(185, "sarah.w_example.com");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(199, "div", 43);
-      \u0275\u0275text(200, "(555) 456-7890");
+      \u0275\u0275elementStart(186, "div", 36);
+      \u0275\u0275text(187, "(555) 456-7890");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(201, "td", 38)(202, "div", 45);
-      \u0275\u0275text(203, "May 15, 2023");
+      \u0275\u0275elementStart(188, "td", 31)(189, "div", 38);
+      \u0275\u0275text(190, "May 15, 2023");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(204, "div", 43);
-      \u0275\u0275text(205, "New Patient");
+      \u0275\u0275elementStart(191, "div", 36);
+      \u0275\u0275text(192, "New Patient");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(206, "td", 38)(207, "span", 54);
-      \u0275\u0275text(208, " New ");
+      \u0275\u0275elementStart(193, "td", 31)(194, "span", 47);
+      \u0275\u0275text(195, " New ");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(209, "td", 38)(210, "div", 45);
-      \u0275\u0275text(211, "Dr. Michael Chen");
+      \u0275\u0275elementStart(196, "td", 31)(197, "div", 38);
+      \u0275\u0275text(198, "Dr. Michael Chen");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(212, "td", 47)(213, "button", 48);
-      \u0275\u0275text(214, "View");
+      \u0275\u0275elementStart(199, "td", 40)(200, "button", 41);
+      \u0275\u0275text(201, "View");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(215, "button", 49);
-      \u0275\u0275text(216, "Message");
+      \u0275\u0275elementStart(202, "button", 42);
+      \u0275\u0275text(203, "Message");
       \u0275\u0275elementEnd()()();
-      \u0275\u0275elementStart(217, "tr", 37)(218, "td", 38)(219, "div", 3)(220, "div", 39);
-      \u0275\u0275element(221, "img", 55);
+      \u0275\u0275elementStart(204, "tr", 30)(205, "td", 31)(206, "div", 14)(207, "div", 32);
+      \u0275\u0275element(208, "img", 48);
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(222, "div", 41)(223, "div", 42);
-      \u0275\u0275text(224, "Robert Taylor");
+      \u0275\u0275elementStart(209, "div", 34)(210, "div", 35);
+      \u0275\u0275text(211, "Robert Taylor");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(225, "div", 43);
-      \u0275\u0275text(226, "ID: #PAT-1005");
+      \u0275\u0275elementStart(212, "div", 36);
+      \u0275\u0275text(213, "ID: #PAT-1005");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(227, "div", 44);
-      \u0275\u0275text(228, "Male, 64 years");
+      \u0275\u0275elementStart(214, "div", 37);
+      \u0275\u0275text(215, "Male, 64 years");
       \u0275\u0275elementEnd()()()();
-      \u0275\u0275elementStart(229, "td", 38)(230, "div", 45);
-      \u0275\u0275text(231, "robert.t_example.com");
+      \u0275\u0275elementStart(216, "td", 31)(217, "div", 38);
+      \u0275\u0275text(218, "robert.t_example.com");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(232, "div", 43);
-      \u0275\u0275text(233, "(555) 567-8901");
+      \u0275\u0275elementStart(219, "div", 36);
+      \u0275\u0275text(220, "(555) 567-8901");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(234, "td", 38)(235, "div", 45);
-      \u0275\u0275text(236, "Apr 30, 2023");
+      \u0275\u0275elementStart(221, "td", 31)(222, "div", 38);
+      \u0275\u0275text(223, "Apr 30, 2023");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(237, "div", 43);
-      \u0275\u0275text(238, "Medication Review");
+      \u0275\u0275elementStart(224, "div", 36);
+      \u0275\u0275text(225, "Medication Review");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(239, "td", 38)(240, "span", 56);
-      \u0275\u0275text(241, " Inactive ");
+      \u0275\u0275elementStart(226, "td", 31)(227, "span", 49);
+      \u0275\u0275text(228, " Inactive ");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(242, "td", 38)(243, "div", 45);
-      \u0275\u0275text(244, "Dr. Sarah Johnson");
+      \u0275\u0275elementStart(229, "td", 31)(230, "div", 38);
+      \u0275\u0275text(231, "Dr. Sarah Johnson");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(245, "td", 47)(246, "button", 48);
-      \u0275\u0275text(247, "View");
+      \u0275\u0275elementStart(232, "td", 40)(233, "button", 41);
+      \u0275\u0275text(234, "View");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(248, "button", 49);
-      \u0275\u0275text(249, "Message");
+      \u0275\u0275elementStart(235, "button", 42);
+      \u0275\u0275text(236, "Message");
       \u0275\u0275elementEnd()()()()()();
-      \u0275\u0275elementStart(250, "div", 57)(251, "div", 58)(252, "a", 59);
-      \u0275\u0275text(253, " Previous ");
+      \u0275\u0275elementStart(237, "div", 50)(238, "div", 51)(239, "a", 52);
+      \u0275\u0275text(240, " Previous ");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(254, "a", 60);
-      \u0275\u0275text(255, " Next ");
+      \u0275\u0275elementStart(241, "a", 53);
+      \u0275\u0275text(242, " Next ");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(256, "div", 61)(257, "div")(258, "p", 62);
-      \u0275\u0275text(259, " Showing ");
-      \u0275\u0275elementStart(260, "span", 63);
-      \u0275\u0275text(261, "1");
+      \u0275\u0275elementStart(243, "div", 54)(244, "div")(245, "p", 55);
+      \u0275\u0275text(246, " Showing ");
+      \u0275\u0275elementStart(247, "span", 56);
+      \u0275\u0275text(248, "1");
       \u0275\u0275elementEnd();
-      \u0275\u0275text(262, " to ");
-      \u0275\u0275elementStart(263, "span", 63);
-      \u0275\u0275text(264, "5");
+      \u0275\u0275text(249, " to ");
+      \u0275\u0275elementStart(250, "span", 56);
+      \u0275\u0275text(251, "5");
       \u0275\u0275elementEnd();
-      \u0275\u0275text(265, " of ");
-      \u0275\u0275elementStart(266, "span", 63);
-      \u0275\u0275text(267, "24");
+      \u0275\u0275text(252, " of ");
+      \u0275\u0275elementStart(253, "span", 56);
+      \u0275\u0275text(254, "24");
       \u0275\u0275elementEnd();
-      \u0275\u0275text(268, " patients ");
+      \u0275\u0275text(255, " patients ");
       \u0275\u0275elementEnd()();
-      \u0275\u0275elementStart(269, "div")(270, "nav", 64)(271, "a", 65)(272, "span", 66);
-      \u0275\u0275text(273, "Previous");
+      \u0275\u0275elementStart(256, "div")(257, "nav", 57)(258, "a", 58)(259, "span", 59);
+      \u0275\u0275text(260, "Previous");
       \u0275\u0275elementEnd();
-      \u0275\u0275element(274, "i", 67);
+      \u0275\u0275element(261, "i", 60);
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(275, "a", 68);
-      \u0275\u0275text(276, " 1 ");
+      \u0275\u0275elementStart(262, "a", 61);
+      \u0275\u0275text(263, " 1 ");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(277, "a", 69);
-      \u0275\u0275text(278, " 2 ");
+      \u0275\u0275elementStart(264, "a", 62);
+      \u0275\u0275text(265, " 2 ");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(279, "a", 69);
-      \u0275\u0275text(280, " 3 ");
+      \u0275\u0275elementStart(266, "a", 62);
+      \u0275\u0275text(267, " 3 ");
       \u0275\u0275elementEnd();
-      \u0275\u0275elementStart(281, "a", 70)(282, "span", 66);
-      \u0275\u0275text(283, "Next");
+      \u0275\u0275elementStart(268, "a", 63)(269, "span", 59);
+      \u0275\u0275text(270, "Next");
       \u0275\u0275elementEnd();
-      \u0275\u0275element(284, "i", 71);
-      \u0275\u0275elementEnd()()()()()()()()();
+      \u0275\u0275element(271, "i", 64);
+      \u0275\u0275elementEnd()()()()()()()();
+      \u0275\u0275elementStart(272, "div", 65, 0)(274, "div", 66)(275, "div", 67)(276, "div", 68)(277, "h3", 69);
+      \u0275\u0275text(278, " New patient ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(279, "button", 70);
+      \u0275\u0275listener("click", function PatientComponent_Template_button_click_279_listener() {
+        \u0275\u0275restoreView(_r1);
+        return \u0275\u0275resetView(ctx.closeModal());
+      });
+      \u0275\u0275namespaceSVG();
+      \u0275\u0275elementStart(280, "svg", 71);
+      \u0275\u0275element(281, "path", 72);
+      \u0275\u0275elementEnd();
+      \u0275\u0275namespaceHTML();
+      \u0275\u0275elementStart(282, "span", 59);
+      \u0275\u0275text(283, "Close modal");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(284, "div", 73)(285, "p", 74);
+      \u0275\u0275text(286, " With less than a month to go before the European Union enacts new consumer privacy laws for its citizens, companies around the world are updating their terms of service agreements to comply. ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(287, "p", 74);
+      \u0275\u0275text(288, " The European Union\u2019s General Data Protection Regulation (G.D.P.R.) goes into effect on May 25 and is meant to ensure a common set of data rights in the European Union. It requires organizations to notify users as soon as possible of high-risk data breaches that could personally affect them. ");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(289, "div", 75)(290, "button", 76);
+      \u0275\u0275text(291, " I accept ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(292, "button", 77);
+      \u0275\u0275text(293, " Decline ");
+      \u0275\u0275elementEnd()()()()();
     }
   }, dependencies: [ReactiveFormsModule, NgSelectOption, \u0275NgSelectMultipleOption], encapsulation: 2 });
 };
 (() => {
   (typeof ngDevMode === "undefined" || ngDevMode) && setClassMetadata(PatientComponent, [{
     type: Component,
-    args: [{ selector: "app-patient", imports: [ReactiveFormsModule], template: '\r\n    <div class="flex h-full ">\r\n        <!-- Main Content -->\r\n        <div class="flex flex-col flex-1">\r\n            <!-- Top Navigation -->\r\n            <header class="flex items-center justify-between px-6 py-4 bg-white border-b border-gray-200">\r\n                <div class="flex items-center">\r\n                    <button class="md:hidden mr-4 text-gray-500">\r\n                        <i class="fas fa-bars"></i>\r\n                    </button>\r\n                    <h1 class="text-xl font-semibold text-gray-800">Patient List</h1>\r\n                </div>\r\n                <div class="flex items-center space-x-4">\r\n                    <button class="p-2 text-gray-500 rounded-full hover:bg-gray-100">\r\n                        <i class="fas fa-bell"></i>\r\n                    </button>\r\n                    <div class="relative">\r\n                        <input type="text" placeholder="Search..." class="pl-10 pr-4 py-2 border rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">\r\n                        <i class="fas fa-search absolute left-3 top-2.5 text-gray-400"></i>\r\n                    </div>\r\n                </div>\r\n            </header>\r\n\r\n            <!-- Main Content Area -->\r\n            <main class="flex-1 overflow-y-auto p-6 bg-gray-100">\r\n                <!-- Patient List Header -->\r\n                <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">\r\n                    <div>\r\n                        <h2 class="text-xl font-semibold text-gray-800">All Patients</h2>\r\n                        <p class="text-sm text-gray-600 mt-1">Manage your patient records and information</p>\r\n                    </div>\r\n                    <div class="mt-4 md:mt-0 flex space-x-3">\r\n                        <div class="relative">\r\n                            <input type="text" placeholder="Search patients..." class="pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">\r\n                            <i class="fas fa-search absolute left-3 top-2.5 text-gray-400"></i>\r\n                        </div>\r\n                        <button class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center">\r\n                            <i class="fas fa-plus mr-2"></i> New Patient\r\n                        </button>\r\n                    </div>\r\n                </div>\r\n\r\n                <!-- Patient Filters -->\r\n                <div class="bg-white rounded-lg shadow p-4 mb-6">\r\n                    <div class="flex flex-wrap items-center gap-4">\r\n                        <div class="flex items-center">\r\n                            <label for="status-filter" class="mr-2 text-sm text-gray-600">Status:</label>\r\n                            <select id="status-filter" class="border rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">\r\n                                <option>All Patients</option>\r\n                                <option>Active</option>\r\n                                <option>Inactive</option>\r\n                                <option>New</option>\r\n                            </select>\r\n                        </div>\r\n                        <div class="flex items-center">\r\n                            <label for="doctor-filter" class="mr-2 text-sm text-gray-600">Doctor:</label>\r\n                            <select id="doctor-filter" class="border rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">\r\n                                <option>All Doctors</option>\r\n                                <option>Dr. Sarah Johnson</option>\r\n                                <option>Dr. Michael Chen</option>\r\n                            </select>\r\n                        </div>\r\n                        <div class="flex items-center">\r\n                            <label for="date-filter" class="mr-2 text-sm text-gray-600">Last Visit:</label>\r\n                            <select id="date-filter" class="border rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">\r\n                                <option>Any Time</option>\r\n                                <option>Last 30 Days</option>\r\n                                <option>Last 3 Months</option>\r\n                                <option>Last Year</option>\r\n                            </select>\r\n                        </div>\r\n                        <button class="ml-auto text-sm text-blue-600 hover:text-blue-800 flex items-center">\r\n                            <i class="fas fa-filter mr-1"></i> Advanced Filters\r\n                        </button>\r\n                    </div>\r\n                </div>\r\n\r\n                <!-- Patient List -->\r\n                <div class="bg-white rounded-lg shadow overflow-hidden">\r\n                    <div class="overflow-x-auto">\r\n                        <table class="min-w-full divide-y divide-gray-200">\r\n                            <thead class="bg-gray-50">\r\n                                <tr>\r\n                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Patient</th>\r\n                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Contact</th>\r\n                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Last Visit</th>\r\n                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>\r\n                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Primary Doctor</th>\r\n                                    <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>\r\n                                </tr>\r\n                            </thead>\r\n                            <tbody class="bg-white divide-y divide-gray-200">\r\n                                <!-- Patient 1 -->\r\n                                <tr class="hover:bg-gray-50">\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="flex items-center">\r\n                                            <div class="flex-shrink-0 h-10 w-10">\r\n                                                <img class="h-10 w-10 rounded-full" src="https://randomuser.me/api/portraits/men/32.jpg" alt="">\r\n                                            </div>\r\n                                            <div class="ml-4">\r\n                                                <div class="text-sm font-medium text-gray-900">John Smith</div>\r\n                                                <div class="text-sm text-gray-500">ID: #PAT-1001</div>\r\n                                                <div class="text-xs text-gray-400">Male, 42 years</div>\r\n                                            </div>\r\n                                        </div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">john.smith_example.com</div>\r\n                                        <div class="text-sm text-gray-500">(555) 123-4567</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">Jun 15, 2023</div>\r\n                                        <div class="text-sm text-gray-500">Follow-up</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">\r\n                                            Active\r\n                                        </span>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">Dr. Sarah Johnson</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">\r\n                                        <button class="text-blue-600 hover:text-blue-900 mr-3">View</button>\r\n                                        <button class="text-gray-600 hover:text-gray-900">Message</button>\r\n                                    </td>\r\n                                </tr>\r\n\r\n                                <!-- Patient 2 -->\r\n                                <tr class="hover:bg-gray-50">\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="flex items-center">\r\n                                            <div class="flex-shrink-0 h-10 w-10">\r\n                                                <img class="h-10 w-10 rounded-full" src="https://randomuser.me/api/portraits/women/44.jpg" alt="">\r\n                                            </div>\r\n                                            <div class="ml-4">\r\n                                                <div class="text-sm font-medium text-gray-900">Emily Johnson</div>\r\n                                                <div class="text-sm text-gray-500">ID: #PAT-1002</div>\r\n                                                <div class="text-xs text-gray-400">Female, 35 years</div>\r\n                                            </div>\r\n                                        </div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">emily.j_example.com</div>\r\n                                        <div class="text-sm text-gray-500">(555) 234-5678</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">Jun 10, 2023</div>\r\n                                        <div class="text-sm text-gray-500">Annual Checkup</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">\r\n                                            Active\r\n                                        </span>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">Dr. Michael Chen</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">\r\n                                        <button class="text-blue-600 hover:text-blue-900 mr-3">View</button>\r\n                                        <button class="text-gray-600 hover:text-gray-900">Message</button>\r\n                                    </td>\r\n                                </tr>\r\n\r\n                                <!-- Patient 3 -->\r\n                                <tr class="hover:bg-gray-50">\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="flex items-center">\r\n                                            <div class="flex-shrink-0 h-10 w-10">\r\n                                                <img class="h-10 w-10 rounded-full" src="https://randomuser.me/api/portraits/men/75.jpg" alt="">\r\n                                            </div>\r\n                                            <div class="ml-4">\r\n                                                <div class="text-sm font-medium text-gray-900">Michael Brown</div>\r\n                                                <div class="text-sm text-gray-500">ID: #PAT-1003</div>\r\n                                                <div class="text-xs text-gray-400">Male, 58 years</div>\r\n                                            </div>\r\n                                        </div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">michael.b_example.com</div>\r\n                                        <div class="text-sm text-gray-500">(555) 345-6789</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">May 28, 2023</div>\r\n                                        <div class="text-sm text-gray-500">Lab Results</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">\r\n                                            Follow-up Needed\r\n                                        </span>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">Dr. Sarah Johnson</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">\r\n                                        <button class="text-blue-600 hover:text-blue-900 mr-3">View</button>\r\n                                        <button class="text-gray-600 hover:text-gray-900">Message</button>\r\n                                    </td>\r\n                                </tr>\r\n\r\n                                <!-- Patient 4 -->\r\n                                <tr class="hover:bg-gray-50">\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="flex items-center">\r\n                                            <div class="flex-shrink-0 h-10 w-10">\r\n                                                <img class="h-10 w-10 rounded-full" src="https://randomuser.me/api/portraits/women/68.jpg" alt="">\r\n                                            </div>\r\n                                            <div class="ml-4">\r\n                                                <div class="text-sm font-medium text-gray-900">Sarah Wilson</div>\r\n                                                <div class="text-sm text-gray-500">ID: #PAT-1004</div>\r\n                                                <div class="text-xs text-gray-400">Female, 29 years</div>\r\n                                            </div>\r\n                                        </div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">sarah.w_example.com</div>\r\n                                        <div class="text-sm text-gray-500">(555) 456-7890</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">May 15, 2023</div>\r\n                                        <div class="text-sm text-gray-500">New Patient</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">\r\n                                            New\r\n                                        </span>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">Dr. Michael Chen</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">\r\n                                        <button class="text-blue-600 hover:text-blue-900 mr-3">View</button>\r\n                                        <button class="text-gray-600 hover:text-gray-900">Message</button>\r\n                                    </td>\r\n                                </tr>\r\n\r\n                                <!-- Patient 5 -->\r\n                                <tr class="hover:bg-gray-50">\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="flex items-center">\r\n                                            <div class="flex-shrink-0 h-10 w-10">\r\n                                                <img class="h-10 w-10 rounded-full" src="https://randomuser.me/api/portraits/men/22.jpg" alt="">\r\n                                            </div>\r\n                                            <div class="ml-4">\r\n                                                <div class="text-sm font-medium text-gray-900">Robert Taylor</div>\r\n                                                <div class="text-sm text-gray-500">ID: #PAT-1005</div>\r\n                                                <div class="text-xs text-gray-400">Male, 64 years</div>\r\n                                            </div>\r\n                                        </div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">robert.t_example.com</div>\r\n                                        <div class="text-sm text-gray-500">(555) 567-8901</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">Apr 30, 2023</div>\r\n                                        <div class="text-sm text-gray-500">Medication Review</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800">\r\n                                            Inactive\r\n                                        </span>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap">\r\n                                        <div class="text-sm text-gray-900">Dr. Sarah Johnson</div>\r\n                                    </td>\r\n                                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">\r\n                                        <button class="text-blue-600 hover:text-blue-900 mr-3">View</button>\r\n                                        <button class="text-gray-600 hover:text-gray-900">Message</button>\r\n                                    </td>\r\n                                </tr>\r\n                            </tbody>\r\n                        </table>\r\n                    </div>\r\n\r\n                    <!-- Pagination -->\r\n                    <div class="bg-gray-50 px-6 py-3 flex items-center justify-between border-t border-gray-200">\r\n                        <div class="flex-1 flex justify-between sm:hidden">\r\n                            <a href="#" class="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">\r\n                                Previous\r\n                            </a>\r\n                            <a href="#" class="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">\r\n                                Next\r\n                            </a>\r\n                        </div>\r\n                        <div class="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">\r\n                            <div>\r\n                                <p class="text-sm text-gray-700">\r\n                                    Showing <span class="font-medium">1</span> to <span class="font-medium">5</span> of <span class="font-medium">24</span> patients\r\n                                </p>\r\n                            </div>\r\n                            <div>\r\n                                <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">\r\n                                    <a href="#" class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">\r\n                                        <span class="sr-only">Previous</span>\r\n                                        <i class="fas fa-chevron-left"></i>\r\n                                    </a>\r\n                                    <a href="#" aria-current="page" class="z-10 bg-blue-50 border-blue-500 text-blue-600 relative inline-flex items-center px-4 py-2 border text-sm font-medium">\r\n                                        1\r\n                                    </a>\r\n                                    <a href="#" class="bg-white border-gray-300 text-gray-500 hover:bg-gray-50 relative inline-flex items-center px-4 py-2 border text-sm font-medium">\r\n                                        2\r\n                                    </a>\r\n                                    <a href="#" class="bg-white border-gray-300 text-gray-500 hover:bg-gray-50 relative inline-flex items-center px-4 py-2 border text-sm font-medium">\r\n                                        3\r\n                                    </a>\r\n                                    <a href="#" class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">\r\n                                        <span class="sr-only">Next</span>\r\n                                        <i class="fas fa-chevron-right"></i>\r\n                                    </a>\r\n                                </nav>\r\n                            </div>\r\n                        </div>\r\n                    </div>\r\n                </div>\r\n            </main>\r\n        </div>\r\n    </div>\r\n' }]
-  }], () => [{ type: FormBuilder }], null);
+    args: [{ selector: "app-patient", imports: [ReactiveFormsModule], template: '<!-- Main Content -->\r\n<div class="flex flex-col h-full flex-1">\r\n  <!-- Main Content Area -->\r\n  <main class="flex-1 overflow-y-auto p-6 bg-gray-100">\r\n    <!-- Patient List Header -->\r\n    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">\r\n      <div>\r\n        <h2 class="text-xl  font-semibold text-gray-800">\r\n          All Patients</h2>\r\n        <p class="text-sm text-gray-600 mt-1">Manage your patient records and information</p>\r\n      </div>\r\n      <div class="mt-4 md:mt-0 flex space-x-3">\r\n        <div class="relative">\r\n          <input type="text" placeholder="Search patients..."\r\n            class="pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">\r\n          <i class="fas fa-search absolute left-3 top-2.5 text-gray-400"></i>\r\n        </div>\r\n        <button (click)="newPatient()"\r\n          class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center">\r\n          <i class="fas fa-plus mr-2"></i> New Patient\r\n        </button>\r\n      </div>\r\n    </div>\r\n\r\n    <!-- Patient Filters -->\r\n    <div class="bg-white rounded-lg shadow p-4 mb-6">\r\n      <div class="flex flex-wrap items-center gap-4">\r\n        <div class="flex items-center">\r\n          <label for="status-filter" class="mr-2 text-sm text-gray-600">Status:</label>\r\n          <select id="status-filter"\r\n            class="border rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">\r\n            <option>All Patients</option>\r\n            <option>Active</option>\r\n            <option>Inactive</option>\r\n            <option>New</option>\r\n          </select>\r\n        </div>\r\n        <div class="flex items-center">\r\n          <label for="doctor-filter" class="mr-2 text-sm text-gray-600">Doctor:</label>\r\n          <select id="doctor-filter"\r\n            class="border rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">\r\n            <option>All Doctors</option>\r\n            <option>Dr. Sarah Johnson</option>\r\n            <option>Dr. Michael Chen</option>\r\n          </select>\r\n        </div>\r\n        <div class="flex items-center">\r\n          <label for="date-filter" class="mr-2 text-sm text-gray-600">Last Visit:</label>\r\n          <select id="date-filter"\r\n            class="border rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">\r\n            <option>Any Time</option>\r\n            <option>Last 30 Days</option>\r\n            <option>Last 3 Months</option>\r\n            <option>Last Year</option>\r\n          </select>\r\n        </div>\r\n        <button class="ml-auto text-sm text-blue-600 hover:text-blue-800 flex items-center">\r\n          <i class="fas fa-filter mr-1"></i> Advanced Filters\r\n        </button>\r\n      </div>\r\n    </div>\r\n\r\n    <!-- Patient List -->\r\n    <div class="bg-white rounded-lg shadow overflow-hidden">\r\n      <div class="overflow-x-auto">\r\n        <table class="min-w-full divide-y divide-gray-200">\r\n          <thead class="bg-gray-50">\r\n            <tr>\r\n              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">\r\n                Patient</th>\r\n              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">\r\n                Contact</th>\r\n              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">\r\n                Last Visit</th>\r\n              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">\r\n                Status</th>\r\n              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">\r\n                Primary Doctor</th>\r\n              <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">\r\n                Actions</th>\r\n            </tr>\r\n          </thead>\r\n          <tbody class="bg-white divide-y divide-gray-200">\r\n            <!-- Patient 1 -->\r\n            <tr class="hover:bg-gray-50">\r\n              <td class="px-6 py-4 whitespace-nowrap">\r\n                <div class="flex items-center">\r\n                  <div class="flex-shrink-0 h-10 w-10">\r\n                    <img class="h-10 w-10 rounded-full" src="https://randomuser.me/api/portraits/men/32.jpg" alt="">\r\n                  </div>\r\n                  <div class="ml-4">\r\n                    <div class="text-sm font-medium text-gray-900">John Smith</div>\r\n                    <div class="text-sm text-gray-500">ID: #PAT-1001</div>\r\n                    <div class="text-xs text-gray-400">Male, 42 years</div>\r\n                  </div>\r\n                </div>\r\n              </td>\r\n              <td class="px-6 py-4 whitespace-nowrap">\r\n                <div class="text-sm text-gray-900">john.smith_example.com</div>\r\n                <div class="text-sm text-gray-500">(555) 123-4567</div>\r\n              </td>\r\n              <td class="px-6 py-4 whitespace-nowrap">\r\n                <div class="text-sm text-gray-900">Jun 15, 2023</div>\r\n                <div class="text-sm text-gray-500">Follow-up</div>\r\n              </td>\r\n              <td class="px-6 py-4 whitespace-nowrap">\r\n                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">\r\n                  Active\r\n                </span>\r\n              </td>\r\n              <td class="px-6 py-4 whitespace-nowrap">\r\n                <div class="text-sm text-gray-900">Dr. Sarah Johnson</div>\r\n              </td>\r\n              <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">\r\n                <button class="text-blue-600 hover:text-blue-900 mr-3">View</button>\r\n                <button class="text-gray-600 hover:text-gray-900">Message</button>\r\n              </td>\r\n            </tr>\r\n\r\n            <!-- Patient 2 -->\r\n            <tr class="hover:bg-gray-50">\r\n              <td class="px-6 py-4 whitespace-nowrap">\r\n                <div class="flex items-center">\r\n                  <div class="flex-shrink-0 h-10 w-10">\r\n                    <img class="h-10 w-10 rounded-full" src="https://randomuser.me/api/portraits/women/44.jpg" alt="">\r\n                  </div>\r\n                  <div class="ml-4">\r\n                    <div class="text-sm font-medium text-gray-900">Emily Johnson</div>\r\n                    <div class="text-sm text-gray-500">ID: #PAT-1002</div>\r\n                    <div class="text-xs text-gray-400">Female, 35 years</div>\r\n                  </div>\r\n                </div>\r\n              </td>\r\n              <td class="px-6 py-4 whitespace-nowrap">\r\n                <div class="text-sm text-gray-900">emily.j_example.com</div>\r\n                <div class="text-sm text-gray-500">(555) 234-5678</div>\r\n              </td>\r\n              <td class="px-6 py-4 whitespace-nowrap">\r\n                <div class="text-sm text-gray-900">Jun 10, 2023</div>\r\n                <div class="text-sm text-gray-500">Annual Checkup</div>\r\n              </td>\r\n              <td class="px-6 py-4 whitespace-nowrap">\r\n                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">\r\n                  Active\r\n                </span>\r\n              </td>\r\n              <td class="px-6 py-4 whitespace-nowrap">\r\n                <div class="text-sm text-gray-900">Dr. Michael Chen</div>\r\n              </td>\r\n              <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">\r\n                <button class="text-blue-600 hover:text-blue-900 mr-3">View</button>\r\n                <button class="text-gray-600 hover:text-gray-900">Message</button>\r\n              </td>\r\n            </tr>\r\n\r\n            <!-- Patient 3 -->\r\n            <tr class="hover:bg-gray-50">\r\n              <td class="px-6 py-4 whitespace-nowrap">\r\n                <div class="flex items-center">\r\n                  <div class="flex-shrink-0 h-10 w-10">\r\n                    <img class="h-10 w-10 rounded-full" src="https://randomuser.me/api/portraits/men/75.jpg" alt="">\r\n                  </div>\r\n                  <div class="ml-4">\r\n                    <div class="text-sm font-medium text-gray-900">Michael Brown</div>\r\n                    <div class="text-sm text-gray-500">ID: #PAT-1003</div>\r\n                    <div class="text-xs text-gray-400">Male, 58 years</div>\r\n                  </div>\r\n                </div>\r\n              </td>\r\n              <td class="px-6 py-4 whitespace-nowrap">\r\n                <div class="text-sm text-gray-900">michael.b_example.com</div>\r\n                <div class="text-sm text-gray-500">(555) 345-6789</div>\r\n              </td>\r\n              <td class="px-6 py-4 whitespace-nowrap">\r\n                <div class="text-sm text-gray-900">May 28, 2023</div>\r\n                <div class="text-sm text-gray-500">Lab Results</div>\r\n              </td>\r\n              <td class="px-6 py-4 whitespace-nowrap">\r\n                <span\r\n                  class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">\r\n                  Follow-up Needed\r\n                </span>\r\n              </td>\r\n              <td class="px-6 py-4 whitespace-nowrap">\r\n                <div class="text-sm text-gray-900">Dr. Sarah Johnson</div>\r\n              </td>\r\n              <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">\r\n                <button class="text-blue-600 hover:text-blue-900 mr-3">View</button>\r\n                <button class="text-gray-600 hover:text-gray-900">Message</button>\r\n              </td>\r\n            </tr>\r\n\r\n            <!-- Patient 4 -->\r\n            <tr class="hover:bg-gray-50">\r\n              <td class="px-6 py-4 whitespace-nowrap">\r\n                <div class="flex items-center">\r\n                  <div class="flex-shrink-0 h-10 w-10">\r\n                    <img class="h-10 w-10 rounded-full" src="https://randomuser.me/api/portraits/women/68.jpg" alt="">\r\n                  </div>\r\n                  <div class="ml-4">\r\n                    <div class="text-sm font-medium text-gray-900">Sarah Wilson</div>\r\n                    <div class="text-sm text-gray-500">ID: #PAT-1004</div>\r\n                    <div class="text-xs text-gray-400">Female, 29 years</div>\r\n                  </div>\r\n                </div>\r\n              </td>\r\n              <td class="px-6 py-4 whitespace-nowrap">\r\n                <div class="text-sm text-gray-900">sarah.w_example.com</div>\r\n                <div class="text-sm text-gray-500">(555) 456-7890</div>\r\n              </td>\r\n              <td class="px-6 py-4 whitespace-nowrap">\r\n                <div class="text-sm text-gray-900">May 15, 2023</div>\r\n                <div class="text-sm text-gray-500">New Patient</div>\r\n              </td>\r\n              <td class="px-6 py-4 whitespace-nowrap">\r\n                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">\r\n                  New\r\n                </span>\r\n              </td>\r\n              <td class="px-6 py-4 whitespace-nowrap">\r\n                <div class="text-sm text-gray-900">Dr. Michael Chen</div>\r\n              </td>\r\n              <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">\r\n                <button class="text-blue-600 hover:text-blue-900 mr-3">View</button>\r\n                <button class="text-gray-600 hover:text-gray-900">Message</button>\r\n              </td>\r\n            </tr>\r\n\r\n            <!-- Patient 5 -->\r\n            <tr class="hover:bg-gray-50">\r\n              <td class="px-6 py-4 whitespace-nowrap">\r\n                <div class="flex items-center">\r\n                  <div class="flex-shrink-0 h-10 w-10">\r\n                    <img class="h-10 w-10 rounded-full" src="https://randomuser.me/api/portraits/men/22.jpg" alt="">\r\n                  </div>\r\n                  <div class="ml-4">\r\n                    <div class="text-sm font-medium text-gray-900">Robert Taylor</div>\r\n                    <div class="text-sm text-gray-500">ID: #PAT-1005</div>\r\n                    <div class="text-xs text-gray-400">Male, 64 years</div>\r\n                  </div>\r\n                </div>\r\n              </td>\r\n              <td class="px-6 py-4 whitespace-nowrap">\r\n                <div class="text-sm text-gray-900">robert.t_example.com</div>\r\n                <div class="text-sm text-gray-500">(555) 567-8901</div>\r\n              </td>\r\n              <td class="px-6 py-4 whitespace-nowrap">\r\n                <div class="text-sm text-gray-900">Apr 30, 2023</div>\r\n                <div class="text-sm text-gray-500">Medication Review</div>\r\n              </td>\r\n              <td class="px-6 py-4 whitespace-nowrap">\r\n                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800">\r\n                  Inactive\r\n                </span>\r\n              </td>\r\n              <td class="px-6 py-4 whitespace-nowrap">\r\n                <div class="text-sm text-gray-900">Dr. Sarah Johnson</div>\r\n              </td>\r\n              <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">\r\n                <button class="text-blue-600 hover:text-blue-900 mr-3">View</button>\r\n                <button class="text-gray-600 hover:text-gray-900">Message</button>\r\n              </td>\r\n            </tr>\r\n          </tbody>\r\n        </table>\r\n      </div>\r\n\r\n      <!-- Pagination -->\r\n      <div class="bg-gray-50 px-6 py-3 flex items-center justify-between border-t border-gray-200">\r\n        <div class="flex-1 flex justify-between sm:hidden">\r\n          <a href="#"\r\n            class="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">\r\n            Previous\r\n          </a>\r\n          <a href="#"\r\n            class="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">\r\n            Next\r\n          </a>\r\n        </div>\r\n        <div class="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">\r\n          <div>\r\n            <p class="text-sm text-gray-700">\r\n              Showing <span class="font-medium">1</span> to <span class="font-medium">5</span> of <span\r\n                class="font-medium">24</span> patients\r\n            </p>\r\n          </div>\r\n          <div>\r\n            <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">\r\n              <a href="#"\r\n                class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">\r\n                <span class="sr-only">Previous</span>\r\n                <i class="fas fa-chevron-left"></i>\r\n              </a>\r\n              <a href="#" aria-current="page"\r\n                class="z-10 bg-blue-50 border-blue-500 text-blue-600 relative inline-flex items-center px-4 py-2 border text-sm font-medium">\r\n                1\r\n              </a>\r\n              <a href="#"\r\n                class="bg-white border-gray-300 text-gray-500 hover:bg-gray-50 relative inline-flex items-center px-4 py-2 border text-sm font-medium">\r\n                2\r\n              </a>\r\n              <a href="#"\r\n                class="bg-white border-gray-300 text-gray-500 hover:bg-gray-50 relative inline-flex items-center px-4 py-2 border text-sm font-medium">\r\n                3\r\n              </a>\r\n              <a href="#"\r\n                class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">\r\n                <span class="sr-only">Next</span>\r\n                <i class="fas fa-chevron-right"></i>\r\n              </a>\r\n            </nav>\r\n          </div>\r\n        </div>\r\n      </div>\r\n    </div>\r\n  </main>\r\n</div>\r\n\r\n<!-- add new patient modal -->\r\n\r\n<div #newPatientModal id="modalEl" tabindex="-1" aria-hidden="true"\r\n  class="fixed left-0 right-0 top-0 z-50 hidden h-[calc(100%-1rem)] max-h-full w-full overflow-y-auto overflow-x-hidden p-4 md:inset-0">\r\n  <div class="relative max-h-full w-full max-w-2xl">\r\n    <!-- Modal content -->\r\n    <div class="relative rounded-lg bg-white shadow-sm dark:bg-gray-700">\r\n      <!-- Modal header -->\r\n      <div class="flex items-start justify-between rounded-t border-b p-5 dark:border-gray-600">\r\n        <h3 class="text-xl font-semibold text-gray-900 dark:text-white lg:text-2xl">\r\n          New patient\r\n        </h3>\r\n        <button type="button" (click)="closeModal()"\r\n          class="ms-auto inline-flex h-8 w-8 items-center justify-center rounded-lg bg-transparent text-sm text-gray-400 hover:bg-gray-200 hover:text-gray-900 dark:hover:bg-gray-600 dark:hover:text-white">\r\n          <svg class="h-3 w-3" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 14 14">\r\n            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"\r\n              d="m1 1 6 6m0 0 6 6M7 7l6-6M7 7l-6 6" />\r\n          </svg>\r\n          <span class="sr-only">Close modal</span>\r\n        </button>\r\n      </div>\r\n      <!-- Modal body -->\r\n      <div class="space-y-6 p-6">\r\n        <p class="text-base leading-relaxed text-gray-500 dark:text-gray-400">\r\n          With less than a month to go before the European Union\r\n          enacts new consumer privacy laws for its citizens, companies\r\n          around the world are updating their terms of service\r\n          agreements to comply.\r\n        </p>\r\n        <p class="text-base leading-relaxed text-gray-500 dark:text-gray-400">\r\n          The European Union\u2019s General Data Protection Regulation\r\n          (G.D.P.R.) goes into effect on May 25 and is meant to ensure\r\n          a common set of data rights in the European Union. It\r\n          requires organizations to notify users as soon as possible\r\n          of high-risk data breaches that could personally affect\r\n          them.\r\n        </p>\r\n      </div>\r\n      <!-- Modal footer -->\r\n      <div\r\n        class="flex items-center space-x-2 rtl:space-x-reverse rounded-b border-t border-gray-200 p-6 dark:border-gray-600">\r\n        <button type="button"\r\n          class="rounded-lg bg-blue-700 px-5 py-2.5 text-center text-sm font-medium text-white hover:bg-blue-800 focus:outline-none focus:ring-4 focus:ring-blue-300 dark:bg-blue-600 dark:hover:bg-blue-700 dark:focus:ring-blue-800">\r\n          I accept\r\n        </button>\r\n        <button type="button"\r\n          class="rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-900 focus:z-10 focus:outline-none focus:ring-4 focus:ring-blue-300 dark:border-gray-500 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 dark:hover:text-white">\r\n          Decline\r\n        </button>\r\n      </div>\r\n    </div>\r\n  </div>\r\n</div>' }]
+  }], () => [{ type: Router }], { newPatientModalRef: [{
+    type: ViewChild,
+    args: ["newPatientModal"]
+  }] });
 })();
 (() => {
-  (typeof ngDevMode === "undefined" || ngDevMode) && \u0275setClassDebugInfo(PatientComponent, { className: "PatientComponent", filePath: "src/app/patient/patient/patient.component.ts", lineNumber: 13 });
+  (typeof ngDevMode === "undefined" || ngDevMode) && \u0275setClassDebugInfo(PatientComponent, { className: "PatientComponent", filePath: "src/app/patient/patient/patient.component.ts", lineNumber: 15 });
+})();
+
+// src/app/patient/review-patient/review-patient.component.ts
+var ReviewPatientComponent = class _ReviewPatientComponent {
+  static \u0275fac = function ReviewPatientComponent_Factory(__ngFactoryType__) {
+    return new (__ngFactoryType__ || _ReviewPatientComponent)();
+  };
+  static \u0275cmp = /* @__PURE__ */ \u0275\u0275defineComponent({ type: _ReviewPatientComponent, selectors: [["app-review-patient"]], decls: 249, vars: 0, consts: [["lang", "en"], ["charset", "UTF-8"], ["name", "viewport", "content", "width=device-width, initial-scale=1.0"], ["href", \u0275\u0275trustConstantResourceUrl`https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css`, "rel", "stylesheet"], [1, "bg-gray-50", "font-sans"], [1, "container", "mx-auto", "px-4", "py-8"], [1, "mb-8"], [1, "flex", "items-center", "justify-center"], [1, "flex", "items-center", "space-x-8"], [1, "flex", "items-center", "space-x-3"], [1, "flex", "items-center", "justify-center", "w-8", "h-8", "rounded-full", "bg-gray-200", "text-gray-600"], [1, "font-medium"], [1, "flex", "items-center", "justify-center", "w-8", "h-8", "rounded-full", "bg-blue-600", "text-white"], [1, "font-medium", "text-gray-500"], [1, "flex", "justify-between", "items-center", "mb-8"], [1, "text-3xl", "font-bold", "text-blue-800"], [1, "text-gray-600"], [1, "flex", "items-center", "space-x-4"], [1, "bg-blue-100", "text-blue-800", "px-3", "py-1", "rounded-full", "text-sm", "font-medium"], [1, "bg-blue-600", "hover:bg-blue-700", "text-white", "px-4", "py-2", "rounded-lg", "flex", "items-center"], [1, "fas", "fa-print", "mr-2"], [1, "space-y-6"], [1, "bg-white", "rounded-xl", "shadow-md", "overflow-hidden"], [1, "border-b", "border-gray-200", "px-6", "py-4", "flex", "justify-between", "items-center"], [1, "text-lg", "font-semibold", "text-gray-800"], [1, "text-blue-600", "hover:text-blue-800", "text-sm"], [1, "fas", "fa-edit", "mr-1"], [1, "p-6"], [1, "grid", "grid-cols-1", "md:grid-cols-4", "gap-4"], [1, "text-sm", "text-gray-500"], [1, "grid", "grid-cols-1", "md:grid-cols-3", "gap-6"], [1, "font-medium", "text-gray-700", "mb-3", "flex", "items-center"], [1, "fas", "fa-disease", "text-blue-500", "mr-2"], [1, "space-y-2"], [1, "flex", "items-start"], [1, "text-green-500", "mr-2"], [1, "fas", "fa-allergy", "text-red-500", "mr-2"], [1, "text-red-500", "mr-2"], [1, "text-yellow-500", "mr-2"], [1, "fas", "fa-pills", "text-purple-500", "mr-2"], [1, "text-purple-500", "mr-2"], [1, "border-b", "border-gray-200", "px-6", "py-4"], [1, "mb-6"], [1, "fas", "fa-heartbeat", "text-blue-500", "mr-2"], [1, "bg-blue-50", "p-4", "rounded-lg"], [1, "grid", "grid-cols-2", "md:grid-cols-4", "gap-4"], [1, "mt-3", "text-sm", "text-gray-500"], [1, "fas", "fa-syringe", "text-green-500", "mr-2"], [1, "bg-green-50", "p-4", "rounded-lg"], [1, "grid", "grid-cols-1", "md:grid-cols-2", "gap-4"], [1, "fas", "fa-family", "text-purple-500", "mr-2"], [1, "bg-purple-50", "p-4", "rounded-lg"], [1, "space-y-4"], ["type", "checkbox", "id", "verifyInfo", 1, "mt-1", "h-4", "w-4", "text-blue-600", "focus:ring-blue-500", "rounded"], ["for", "verifyInfo", 1, "ml-2", "block", "text-sm", "text-gray-700"], ["type", "checkbox", "id", "verifyConsent", 1, "mt-1", "h-4", "w-4", "text-blue-600", "focus:ring-blue-500", "rounded"], ["for", "verifyConsent", 1, "ml-2", "block", "text-sm", "text-gray-700"], ["type", "checkbox", "id", "verifyReview", 1, "mt-1", "h-4", "w-4", "text-blue-600", "focus:ring-blue-500", "rounded"], ["for", "verifyReview", 1, "ml-2", "block", "text-sm", "text-gray-700"], [1, "mt-6"], ["for", "providerName", 1, "block", "text-sm", "font-medium", "text-gray-700", "mb-1"], ["type", "text", "id", "providerName", "placeholder", "Your full name", 1, "w-full", "md:w-1/2", "px-4", "py-2", "rounded-lg", "border", "border-gray-300", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500", "focus:border-blue-500"], [1, "flex", "justify-between", "pt-6"], [1, "px-6", "py-3", "border", "border-gray-300", "rounded-lg", "text-gray-700", "hover:bg-gray-50", "focus:outline-none", "focus:ring-2", "focus:ring-blue-500"], [1, "fas", "fa-arrow-left", "mr-2"], [1, "px-6", "py-3", "bg-green-600", "text-white", "rounded-lg", "hover:bg-green-700", "focus:outline-none", "focus:ring-2", "focus:ring-green-500", "focus:ring-offset-2"], [1, "fas", "fa-check-circle", "mr-2"]], template: function ReviewPatientComponent_Template(rf, ctx) {
+    if (rf & 1) {
+      \u0275\u0275elementStart(0, "html", 0)(1, "head");
+      \u0275\u0275element(2, "meta", 1)(3, "meta", 2);
+      \u0275\u0275elementStart(4, "title");
+      \u0275\u0275text(5, "Patient Review");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(6, "link", 3);
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(7, "body", 4)(8, "div", 5)(9, "div", 6)(10, "nav", 7)(11, "ol", 8)(12, "li", 9)(13, "div", 10);
+      \u0275\u0275text(14, " 1 ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(15, "span", 11);
+      \u0275\u0275text(16, "Personal Information");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(17, "li", 9)(18, "div", 10);
+      \u0275\u0275text(19, " 2 ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(20, "span", 11);
+      \u0275\u0275text(21, "Medical History");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(22, "li", 9)(23, "div", 12);
+      \u0275\u0275text(24, " 3 ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(25, "span", 13);
+      \u0275\u0275text(26, "Confirmaion");
+      \u0275\u0275elementEnd()()()()();
+      \u0275\u0275elementStart(27, "div", 14)(28, "div")(29, "h1", 15);
+      \u0275\u0275text(30, "Patient Review");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(31, "p", 16);
+      \u0275\u0275text(32, "Verify patient information before submission");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(33, "div", 17)(34, "span", 18);
+      \u0275\u0275text(35, "Pending Review");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(36, "button", 19);
+      \u0275\u0275element(37, "i", 20);
+      \u0275\u0275text(38, " Print ");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(39, "div", 21)(40, "div", 22)(41, "div", 23)(42, "h3", 24);
+      \u0275\u0275text(43, "Patient Information");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(44, "button", 25);
+      \u0275\u0275element(45, "i", 26);
+      \u0275\u0275text(46, " Edit ");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(47, "div", 27)(48, "div", 28)(49, "div")(50, "p", 29);
+      \u0275\u0275text(51, "Full Name");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(52, "p", 11);
+      \u0275\u0275text(53, "John Michael Doe");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(54, "div")(55, "p", 29);
+      \u0275\u0275text(56, "Date of Birth");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(57, "p", 11);
+      \u0275\u0275text(58, "May 15, 1985 (38 years)");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(59, "div")(60, "p", 29);
+      \u0275\u0275text(61, "Gender");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(62, "p", 11);
+      \u0275\u0275text(63, "Male");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(64, "div")(65, "p", 29);
+      \u0275\u0275text(66, "Patient ID");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(67, "p", 11);
+      \u0275\u0275text(68, "P-123456");
+      \u0275\u0275elementEnd()()()()();
+      \u0275\u0275elementStart(69, "div", 22)(70, "div", 23)(71, "h3", 24);
+      \u0275\u0275text(72, "Medical History Summary");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(73, "button", 25);
+      \u0275\u0275element(74, "i", 26);
+      \u0275\u0275text(75, " Edit ");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(76, "div", 27)(77, "div", 30)(78, "div")(79, "h4", 31);
+      \u0275\u0275element(80, "i", 32);
+      \u0275\u0275text(81, " Conditions ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(82, "ul", 33)(83, "li", 34)(84, "span", 35);
+      \u0275\u0275text(85, "\u2022");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(86, "span");
+      \u0275\u0275text(87, "Type 2 Diabetes (2018)");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(88, "li", 34)(89, "span", 35);
+      \u0275\u0275text(90, "\u2022");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(91, "span");
+      \u0275\u0275text(92, "Hypertension (2019)");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(93, "li", 34)(94, "span", 35);
+      \u0275\u0275text(95, "\u2022");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(96, "span");
+      \u0275\u0275text(97, "Hyperlipidemia (2020)");
+      \u0275\u0275elementEnd()()()();
+      \u0275\u0275elementStart(98, "div")(99, "h4", 31);
+      \u0275\u0275element(100, "i", 36);
+      \u0275\u0275text(101, " Allergies ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(102, "ul", 33)(103, "li", 34)(104, "span", 37);
+      \u0275\u0275text(105, "\u2022");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(106, "span");
+      \u0275\u0275text(107, "Penicillin (Severe)");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(108, "li", 34)(109, "span", 38);
+      \u0275\u0275text(110, "\u2022");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(111, "span");
+      \u0275\u0275text(112, "Sulfa Drugs (Moderate)");
+      \u0275\u0275elementEnd()()()();
+      \u0275\u0275elementStart(113, "div")(114, "h4", 31);
+      \u0275\u0275element(115, "i", 39);
+      \u0275\u0275text(116, " Medications ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(117, "ul", 33)(118, "li", 34)(119, "span", 40);
+      \u0275\u0275text(120, "\u2022");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(121, "span");
+      \u0275\u0275text(122, "Lisinopril 10mg daily");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(123, "li", 34)(124, "span", 40);
+      \u0275\u0275text(125, "\u2022");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(126, "span");
+      \u0275\u0275text(127, "Atorvastatin 20mg daily");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(128, "li", 34)(129, "span", 40);
+      \u0275\u0275text(130, "\u2022");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(131, "span");
+      \u0275\u0275text(132, "Metformin 500mg twice daily");
+      \u0275\u0275elementEnd()()()()()()();
+      \u0275\u0275elementStart(133, "div", 22)(134, "div", 41)(135, "h3", 24);
+      \u0275\u0275text(136, "New Entries to Be Added");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(137, "div", 27)(138, "div", 42)(139, "h4", 31);
+      \u0275\u0275element(140, "i", 43);
+      \u0275\u0275text(141, " Vital Signs ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(142, "div", 44)(143, "div", 45)(144, "div")(145, "p", 29);
+      \u0275\u0275text(146, "Blood Pressure");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(147, "p", 11);
+      \u0275\u0275text(148, "128/82 mmHg");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(149, "div")(150, "p", 29);
+      \u0275\u0275text(151, "Heart Rate");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(152, "p", 11);
+      \u0275\u0275text(153, "72 bpm");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(154, "div")(155, "p", 29);
+      \u0275\u0275text(156, "Temperature");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(157, "p", 11);
+      \u0275\u0275text(158, "36.8 \xB0C");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(159, "div")(160, "p", 29);
+      \u0275\u0275text(161, "SpO\u2082");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(162, "p", 11);
+      \u0275\u0275text(163, "98%");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(164, "div", 46);
+      \u0275\u0275text(165, " Recorded: ");
+      \u0275\u0275elementStart(166, "span", 11);
+      \u0275\u0275text(167, "Today at 10:30 AM");
+      \u0275\u0275elementEnd()()()();
+      \u0275\u0275elementStart(168, "div", 42)(169, "h4", 31);
+      \u0275\u0275element(170, "i", 47);
+      \u0275\u0275text(171, " New Immunization ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(172, "div", 48)(173, "div", 49)(174, "div")(175, "p", 29);
+      \u0275\u0275text(176, "Vaccine");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(177, "p", 11);
+      \u0275\u0275text(178, "Influenza (Seasonal 2023-2024)");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(179, "div")(180, "p", 29);
+      \u0275\u0275text(181, "Administered");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(182, "p", 11);
+      \u0275\u0275text(183, "Oct 15, 2023");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(184, "div")(185, "p", 29);
+      \u0275\u0275text(186, "Lot Number");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(187, "p", 11);
+      \u0275\u0275text(188, "FLU12345");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(189, "div")(190, "p", 29);
+      \u0275\u0275text(191, "Administered By");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(192, "p", 11);
+      \u0275\u0275text(193, "Dr. Sarah Johnson");
+      \u0275\u0275elementEnd()()()()();
+      \u0275\u0275elementStart(194, "div")(195, "h4", 31);
+      \u0275\u0275element(196, "i", 50);
+      \u0275\u0275text(197, " New Family History ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(198, "div", 51)(199, "div", 49)(200, "div")(201, "p", 29);
+      \u0275\u0275text(202, "Family Member");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(203, "p", 11);
+      \u0275\u0275text(204, "Father");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(205, "div")(206, "p", 29);
+      \u0275\u0275text(207, "Condition");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(208, "p", 11);
+      \u0275\u0275text(209, "Heart Disease");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(210, "div")(211, "p", 29);
+      \u0275\u0275text(212, "Status");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(213, "p", 11);
+      \u0275\u0275text(214, "Deceased at age 68");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(215, "div")(216, "p", 29);
+      \u0275\u0275text(217, "Side of Family");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(218, "p", 11);
+      \u0275\u0275text(219, "Paternal");
+      \u0275\u0275elementEnd()()()()()()();
+      \u0275\u0275elementStart(220, "div", 22)(221, "div", 41)(222, "h3", 24);
+      \u0275\u0275text(223, "Verification");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(224, "div", 27)(225, "div", 52)(226, "div", 34);
+      \u0275\u0275element(227, "input", 53);
+      \u0275\u0275elementStart(228, "label", 54);
+      \u0275\u0275text(229, " I have verified that all patient information is accurate and complete ");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(230, "div", 34);
+      \u0275\u0275element(231, "input", 55);
+      \u0275\u0275elementStart(232, "label", 56);
+      \u0275\u0275text(233, " I confirm that the patient has provided consent for this information to be recorded ");
+      \u0275\u0275elementEnd()();
+      \u0275\u0275elementStart(234, "div", 34);
+      \u0275\u0275element(235, "input", 57);
+      \u0275\u0275elementStart(236, "label", 58);
+      \u0275\u0275text(237, " I have reviewed all new entries for accuracy and completeness ");
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(238, "div", 59)(239, "label", 60);
+      \u0275\u0275text(240, "Provider Name*");
+      \u0275\u0275elementEnd();
+      \u0275\u0275element(241, "input", 61);
+      \u0275\u0275elementEnd()()();
+      \u0275\u0275elementStart(242, "div", 62)(243, "button", 63);
+      \u0275\u0275element(244, "i", 64);
+      \u0275\u0275text(245, " Back to Edit ");
+      \u0275\u0275elementEnd();
+      \u0275\u0275elementStart(246, "button", 65);
+      \u0275\u0275element(247, "i", 66);
+      \u0275\u0275text(248, " Confirm and Submit ");
+      \u0275\u0275elementEnd()()()()()();
+    }
+  }, encapsulation: 2 });
+};
+(() => {
+  (typeof ngDevMode === "undefined" || ngDevMode) && setClassMetadata(ReviewPatientComponent, [{
+    type: Component,
+    args: [{ selector: "app-review-patient", imports: [], template: '<!DOCTYPE html>\r\n<html lang="en">\r\n\r\n<head>\r\n  <meta charset="UTF-8">\r\n  <meta name="viewport" content="width=device-width, initial-scale=1.0">\r\n  <title>Patient Review</title>\r\n  <script src="https://cdn.tailwindcss.com"><\/script>\r\n  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">\r\n</head>\r\n\r\n<body class="bg-gray-50 font-sans">\r\n  <div class="container mx-auto px-4 py-8">\r\n    <!-- Header -->\r\n    <div class="mb-8">\r\n      <nav class="flex items-center justify-center">\r\n        <ol class="flex items-center space-x-8">\r\n          <li class="flex items-center space-x-3">\r\n            <div class="flex items-center justify-center w-8 h-8 rounded-full bg-gray-200 text-gray-600">\r\n              1\r\n            </div>\r\n            <span class="font-medium ">Personal Information</span>\r\n          </li>\r\n          <li class="flex items-center space-x-3">\r\n            <div class="flex items-center justify-center w-8 h-8 rounded-full bg-gray-200 text-gray-600">\r\n              2\r\n            </div>\r\n            <span class="font-medium ">Medical History</span>\r\n          </li>\r\n          <li class="flex items-center space-x-3">\r\n            <div class="flex items-center justify-center w-8 h-8 rounded-full bg-blue-600 text-white">\r\n              3\r\n            </div>\r\n            <span class="font-medium text-gray-500">Confirmaion</span>\r\n          </li>\r\n\r\n        </ol>\r\n      </nav>\r\n    </div>\r\n    <!-- Header -->\r\n    <div class="flex justify-between items-center mb-8">\r\n      <div>\r\n        <h1 class="text-3xl font-bold text-blue-800">Patient Review</h1>\r\n        <p class="text-gray-600">Verify patient information before submission</p>\r\n      </div>\r\n      <div class="flex items-center space-x-4">\r\n        <span class="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">Pending Review</span>\r\n        <button class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center">\r\n          <i class="fas fa-print mr-2"></i> Print\r\n        </button>\r\n      </div>\r\n    </div>\r\n\r\n    <!-- Review Sections -->\r\n    <div class="space-y-6">\r\n      <!-- Patient Information Card -->\r\n      <div class="bg-white rounded-xl shadow-md overflow-hidden">\r\n        <div class="border-b border-gray-200 px-6 py-4 flex justify-between items-center">\r\n          <h3 class="text-lg font-semibold text-gray-800">Patient Information</h3>\r\n          <button class="text-blue-600 hover:text-blue-800 text-sm">\r\n            <i class="fas fa-edit mr-1"></i> Edit\r\n          </button>\r\n        </div>\r\n        <div class="p-6">\r\n          <div class="grid grid-cols-1 md:grid-cols-4 gap-4">\r\n            <div>\r\n              <p class="text-sm text-gray-500">Full Name</p>\r\n              <p class="font-medium">John Michael Doe</p>\r\n            </div>\r\n            <div>\r\n              <p class="text-sm text-gray-500">Date of Birth</p>\r\n              <p class="font-medium">May 15, 1985 (38 years)</p>\r\n            </div>\r\n            <div>\r\n              <p class="text-sm text-gray-500">Gender</p>\r\n              <p class="font-medium">Male</p>\r\n            </div>\r\n            <div>\r\n              <p class="text-sm text-gray-500">Patient ID</p>\r\n              <p class="font-medium">P-123456</p>\r\n            </div>\r\n          </div>\r\n        </div>\r\n      </div>\r\n\r\n      <!-- Medical History Summary -->\r\n      <div class="bg-white rounded-xl shadow-md overflow-hidden">\r\n        <div class="border-b border-gray-200 px-6 py-4 flex justify-between items-center">\r\n          <h3 class="text-lg font-semibold text-gray-800">Medical History Summary</h3>\r\n          <button class="text-blue-600 hover:text-blue-800 text-sm">\r\n            <i class="fas fa-edit mr-1"></i> Edit\r\n          </button>\r\n        </div>\r\n        <div class="p-6">\r\n          <div class="grid grid-cols-1 md:grid-cols-3 gap-6">\r\n            <!-- Conditions -->\r\n            <div>\r\n              <h4 class="font-medium text-gray-700 mb-3 flex items-center">\r\n                <i class="fas fa-disease text-blue-500 mr-2"></i> Conditions\r\n              </h4>\r\n              <ul class="space-y-2">\r\n                <li class="flex items-start">\r\n                  <span class="text-green-500 mr-2">\u2022</span>\r\n                  <span>Type 2 Diabetes (2018)</span>\r\n                </li>\r\n                <li class="flex items-start">\r\n                  <span class="text-green-500 mr-2">\u2022</span>\r\n                  <span>Hypertension (2019)</span>\r\n                </li>\r\n                <li class="flex items-start">\r\n                  <span class="text-green-500 mr-2">\u2022</span>\r\n                  <span>Hyperlipidemia (2020)</span>\r\n                </li>\r\n              </ul>\r\n            </div>\r\n\r\n            <!-- Allergies -->\r\n            <div>\r\n              <h4 class="font-medium text-gray-700 mb-3 flex items-center">\r\n                <i class="fas fa-allergy text-red-500 mr-2"></i> Allergies\r\n              </h4>\r\n              <ul class="space-y-2">\r\n                <li class="flex items-start">\r\n                  <span class="text-red-500 mr-2">\u2022</span>\r\n                  <span>Penicillin (Severe)</span>\r\n                </li>\r\n                <li class="flex items-start">\r\n                  <span class="text-yellow-500 mr-2">\u2022</span>\r\n                  <span>Sulfa Drugs (Moderate)</span>\r\n                </li>\r\n              </ul>\r\n            </div>\r\n\r\n            <!-- Medications -->\r\n            <div>\r\n              <h4 class="font-medium text-gray-700 mb-3 flex items-center">\r\n                <i class="fas fa-pills text-purple-500 mr-2"></i> Medications\r\n              </h4>\r\n              <ul class="space-y-2">\r\n                <li class="flex items-start">\r\n                  <span class="text-purple-500 mr-2">\u2022</span>\r\n                  <span>Lisinopril 10mg daily</span>\r\n                </li>\r\n                <li class="flex items-start">\r\n                  <span class="text-purple-500 mr-2">\u2022</span>\r\n                  <span>Atorvastatin 20mg daily</span>\r\n                </li>\r\n                <li class="flex items-start">\r\n                  <span class="text-purple-500 mr-2">\u2022</span>\r\n                  <span>Metformin 500mg twice daily</span>\r\n                </li>\r\n              </ul>\r\n            </div>\r\n          </div>\r\n        </div>\r\n      </div>\r\n\r\n      <!-- New Entries Review -->\r\n      <div class="bg-white rounded-xl shadow-md overflow-hidden">\r\n        <div class="border-b border-gray-200 px-6 py-4">\r\n          <h3 class="text-lg font-semibold text-gray-800">New Entries to Be Added</h3>\r\n        </div>\r\n        <div class="p-6">\r\n          <!-- Vital Signs -->\r\n          <div class="mb-6">\r\n            <h4 class="font-medium text-gray-700 mb-3 flex items-center">\r\n              <i class="fas fa-heartbeat text-blue-500 mr-2"></i> Vital Signs\r\n            </h4>\r\n            <div class="bg-blue-50 p-4 rounded-lg">\r\n              <div class="grid grid-cols-2 md:grid-cols-4 gap-4">\r\n                <div>\r\n                  <p class="text-sm text-gray-500">Blood Pressure</p>\r\n                  <p class="font-medium">128/82 mmHg</p>\r\n                </div>\r\n                <div>\r\n                  <p class="text-sm text-gray-500">Heart Rate</p>\r\n                  <p class="font-medium">72 bpm</p>\r\n                </div>\r\n                <div>\r\n                  <p class="text-sm text-gray-500">Temperature</p>\r\n                  <p class="font-medium">36.8 \xB0C</p>\r\n                </div>\r\n                <div>\r\n                  <p class="text-sm text-gray-500">SpO\u2082</p>\r\n                  <p class="font-medium">98%</p>\r\n                </div>\r\n              </div>\r\n              <div class="mt-3 text-sm text-gray-500">\r\n                Recorded: <span class="font-medium">Today at 10:30 AM</span>\r\n              </div>\r\n            </div>\r\n          </div>\r\n\r\n          <!-- New Immunization -->\r\n          <div class="mb-6">\r\n            <h4 class="font-medium text-gray-700 mb-3 flex items-center">\r\n              <i class="fas fa-syringe text-green-500 mr-2"></i> New Immunization\r\n            </h4>\r\n            <div class="bg-green-50 p-4 rounded-lg">\r\n              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">\r\n                <div>\r\n                  <p class="text-sm text-gray-500">Vaccine</p>\r\n                  <p class="font-medium">Influenza (Seasonal 2023-2024)</p>\r\n                </div>\r\n                <div>\r\n                  <p class="text-sm text-gray-500">Administered</p>\r\n                  <p class="font-medium">Oct 15, 2023</p>\r\n                </div>\r\n                <div>\r\n                  <p class="text-sm text-gray-500">Lot Number</p>\r\n                  <p class="font-medium">FLU12345</p>\r\n                </div>\r\n                <div>\r\n                  <p class="text-sm text-gray-500">Administered By</p>\r\n                  <p class="font-medium">Dr. Sarah Johnson</p>\r\n                </div>\r\n              </div>\r\n            </div>\r\n          </div>\r\n\r\n          <!-- New Family History -->\r\n          <div>\r\n            <h4 class="font-medium text-gray-700 mb-3 flex items-center">\r\n              <i class="fas fa-family text-purple-500 mr-2"></i> New Family History\r\n            </h4>\r\n            <div class="bg-purple-50 p-4 rounded-lg">\r\n              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">\r\n                <div>\r\n                  <p class="text-sm text-gray-500">Family Member</p>\r\n                  <p class="font-medium">Father</p>\r\n                </div>\r\n                <div>\r\n                  <p class="text-sm text-gray-500">Condition</p>\r\n                  <p class="font-medium">Heart Disease</p>\r\n                </div>\r\n                <div>\r\n                  <p class="text-sm text-gray-500">Status</p>\r\n                  <p class="font-medium">Deceased at age 68</p>\r\n                </div>\r\n                <div>\r\n                  <p class="text-sm text-gray-500">Side of Family</p>\r\n                  <p class="font-medium">Paternal</p>\r\n                </div>\r\n              </div>\r\n            </div>\r\n          </div>\r\n        </div>\r\n      </div>\r\n\r\n      <!-- Verification Section -->\r\n      <div class="bg-white rounded-xl shadow-md overflow-hidden">\r\n        <div class="border-b border-gray-200 px-6 py-4">\r\n          <h3 class="text-lg font-semibold text-gray-800">Verification</h3>\r\n        </div>\r\n        <div class="p-6">\r\n          <div class="space-y-4">\r\n            <div class="flex items-start">\r\n              <input type="checkbox" id="verifyInfo" class="mt-1 h-4 w-4 text-blue-600 focus:ring-blue-500 rounded">\r\n              <label for="verifyInfo" class="ml-2 block text-sm text-gray-700">\r\n                I have verified that all patient information is accurate and complete\r\n              </label>\r\n            </div>\r\n            <div class="flex items-start">\r\n              <input type="checkbox" id="verifyConsent" class="mt-1 h-4 w-4 text-blue-600 focus:ring-blue-500 rounded">\r\n              <label for="verifyConsent" class="ml-2 block text-sm text-gray-700">\r\n                I confirm that the patient has provided consent for this information to be recorded\r\n              </label>\r\n            </div>\r\n            <div class="flex items-start">\r\n              <input type="checkbox" id="verifyReview" class="mt-1 h-4 w-4 text-blue-600 focus:ring-blue-500 rounded">\r\n              <label for="verifyReview" class="ml-2 block text-sm text-gray-700">\r\n                I have reviewed all new entries for accuracy and completeness\r\n              </label>\r\n            </div>\r\n          </div>\r\n\r\n          <!-- Provider Signature -->\r\n          <div class="mt-6">\r\n            <label for="providerName" class="block text-sm font-medium text-gray-700 mb-1">Provider Name*</label>\r\n            <input type="text" id="providerName"\r\n              class="w-full md:w-1/2 px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"\r\n              placeholder="Your full name">\r\n          </div>\r\n        </div>\r\n      </div>\r\n\r\n      <!-- Action Buttons -->\r\n      <div class="flex justify-between pt-6">\r\n        <button\r\n          class="px-6 py-3 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">\r\n          <i class="fas fa-arrow-left mr-2"></i> Back to Edit\r\n        </button>\r\n        <button\r\n          class="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2">\r\n          <i class="fas fa-check-circle mr-2"></i> Confirm and Submit\r\n        </button>\r\n      </div>\r\n    </div>\r\n  </div>\r\n</body>\r\n\r\n</html>\r\n' }]
+  }], null, null);
+})();
+(() => {
+  (typeof ngDevMode === "undefined" || ngDevMode) && \u0275setClassDebugInfo(ReviewPatientComponent, { className: "ReviewPatientComponent", filePath: "src/app/patient/review-patient/review-patient.component.ts", lineNumber: 9 });
 })();
 
 // src/app/staff/staff/staff.component.ts
@@ -57585,22 +60348,22 @@ var StaffComponent = class _StaffComponent {
       \u0275\u0275text(29, "All Staff ");
       \u0275\u0275elementEnd()()();
       \u0275\u0275elementStart(30, "div", 20)(31, "table", 21)(32, "thead", 22)(33, "tr")(34, "th", 23);
-      \u0275\u0275text(35, "Staff Member");
+      \u0275\u0275text(35, " Staff Member");
       \u0275\u0275elementEnd();
       \u0275\u0275elementStart(36, "th", 23);
-      \u0275\u0275text(37, "Role");
+      \u0275\u0275text(37, " Role");
       \u0275\u0275elementEnd();
       \u0275\u0275elementStart(38, "th", 23);
-      \u0275\u0275text(39, "Specialty/Department");
+      \u0275\u0275text(39, " Specialty/Department");
       \u0275\u0275elementEnd();
       \u0275\u0275elementStart(40, "th", 23);
-      \u0275\u0275text(41, "Contact");
+      \u0275\u0275text(41, " Contact");
       \u0275\u0275elementEnd();
       \u0275\u0275elementStart(42, "th", 23);
-      \u0275\u0275text(43, "Status");
+      \u0275\u0275text(43, " Status");
       \u0275\u0275elementEnd();
       \u0275\u0275elementStart(44, "th", 24);
-      \u0275\u0275text(45, "Actions");
+      \u0275\u0275text(45, " Actions");
       \u0275\u0275elementEnd()()();
       \u0275\u0275elementStart(46, "tbody", 25)(47, "tr", 26)(48, "td", 27)(49, "div", 28)(50, "div", 29);
       \u0275\u0275element(51, "img", 30);
@@ -57889,386 +60652,416 @@ var StaffComponent = class _StaffComponent {
 (() => {
   (typeof ngDevMode === "undefined" || ngDevMode) && setClassMetadata(StaffComponent, [{
     type: Component,
-    args: [{ selector: "app-staff", imports: [], template: `\r
+    args: [{ selector: "app-staff", imports: [], template: `<!-- Main Content -->\r
+<div class="flex flex-col w-full flex-1">\r
 \r
-\r
-\r
-\r
-        <!-- Main Content -->\r
-        <div class="flex flex-col w-full flex-1">\r
-\r
-            <!-- Main Content Area -->\r
-            <main class="flex-1 overflow-y-auto p-6 bg-gray-100">\r
-                <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">\r
-                    <div>\r
-                        <h1 class="text-2xl font-bold text-gray-800">Staff Management</h1>\r
-                        <p class="text-sm text-gray-600 mt-1">Manage doctors, nurses, and administrative staff</p>\r
-                    </div>\r
-                    <div class="mt-4 md:mt-0 flex space-x-3">\r
-                        <div class="relative">\r
-                            <input type="text" placeholder="Search staff..." class="pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">\r
-                            <i class="fas fa-search absolute left-3 top-3 text-gray-400"></i>\r
-                        </div>\r
-                        <button onclick="openStaffModal()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center">\r
-                            <i class="fas fa-plus mr-2"></i> Add Staff\r
-                        </button>\r
-                    </div>\r
-                </div>\r
-\r
-                <!-- Staff Tabs -->\r
-                <div class="bg-white rounded-lg shadow mb-6">\r
-                    <div class="border-b border-gray-200">\r
-                        <nav class="flex -mb-px">\r
-                            <a href="#" class="whitespace-nowrap py-4 px-6 border-b-2 border-blue-500 font-medium text-sm text-blue-600">\r
-                                <i class="fas fa-user-md mr-2"></i>Doctors\r
-                            </a>\r
-                            <a href="#" class="whitespace-nowrap py-4 px-6 border-b-2 border-transparent font-medium text-sm text-gray-500 hover:text-gray-700 hover:border-gray-300">\r
-                                <i class="fas fa-user-nurse mr-2"></i>Nurses\r
-                            </a>\r
-                            <a href="#" class="whitespace-nowrap py-4 px-6 border-b-2 border-transparent font-medium text-sm text-gray-500 hover:text-gray-700 hover:border-gray-300">\r
-                                <i class="fas fa-user-tie mr-2"></i>Administrative\r
-                            </a>\r
-                            <a href="#" class="whitespace-nowrap py-4 px-6 border-b-2 border-transparent font-medium text-sm text-gray-500 hover:text-gray-700 hover:border-gray-300">\r
-                                <i class="fas fa-users mr-2"></i>All Staff\r
-                            </a>\r
-                        </nav>\r
-                    </div>\r
-\r
-                    <!-- Staff List -->\r
-                    <div class="overflow-x-auto">\r
-                        <table class="min-w-full divide-y divide-gray-200">\r
-                            <thead class="bg-gray-50">\r
-                                <tr>\r
-                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Staff Member</th>\r
-                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>\r
-                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Specialty/Department</th>\r
-                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Contact</th>\r
-                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>\r
-                                    <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>\r
-                                </tr>\r
-                            </thead>\r
-                            <tbody class="bg-white divide-y divide-gray-200">\r
-                                <!-- Doctor 1 -->\r
-                                <tr class="hover:bg-gray-50">\r
-                                    <td class="px-6 py-4 whitespace-nowrap">\r
-                                        <div class="flex items-center">\r
-                                            <div class="flex-shrink-0 h-10 w-10">\r
-                                                <img class="h-10 w-10 rounded-full" src="https://via.placeholder.com/40" alt="">\r
-                                            </div>\r
-                                            <div class="ml-4">\r
-                                                <div class="text-sm font-medium text-gray-900">Dr. Sarah Johnson</div>\r
-                                                <div class="text-sm text-gray-500">ID: DOC-1001</div>\r
-                                            </div>\r
-                                        </div>\r
-                                    </td>\r
-                                    <td class="px-6 py-4 whitespace-nowrap">\r
-                                        <div class="text-sm text-gray-900">Cardiologist</div>\r
-                                        <div class="text-sm text-gray-500">Administrator</div>\r
-                                    </td>\r
-                                    <td class="px-6 py-4 whitespace-nowrap">\r
-                                        <div class="text-sm text-gray-900">Cardiology</div>\r
-                                    </td>\r
-                                    <td class="px-6 py-4 whitespace-nowrap">\r
-                                        <div class="text-sm text-gray-900">sarah.j_medicare.com</div>\r
-                                        <div class="text-sm text-gray-500">(555) 123-4567</div>\r
-                                    </td>\r
-                                    <td class="px-6 py-4 whitespace-nowrap">\r
-                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">\r
-                                            Active\r
-                                        </span>\r
-                                    </td>\r
-                                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">\r
-                                        <button class="text-blue-600 hover:text-blue-900 mr-3">Edit</button>\r
-                                        <button class="text-gray-600 hover:text-gray-900">Deactivate</button>\r
-                                    </td>\r
-                                </tr>\r
-\r
-                                <!-- Nurse 1 -->\r
-                                <tr class="hover:bg-gray-50">\r
-                                    <td class="px-6 py-4 whitespace-nowrap">\r
-                                        <div class="flex items-center">\r
-                                            <div class="flex-shrink-0 h-10 w-10">\r
-                                                <img class="h-10 w-10 rounded-full" src="https://via.placeholder.com/40" alt="">\r
-                                            </div>\r
-                                            <div class="ml-4">\r
-                                                <div class="text-sm font-medium text-gray-900">Amy Rodriguez</div>\r
-                                                <div class="text-sm text-gray-500">ID: NUR-2001</div>\r
-                                            </div>\r
-                                        </div>\r
-                                    </td>\r
-                                    <td class="px-6 py-4 whitespace-nowrap">\r
-                                        <div class="text-sm text-gray-900">Registered Nurse</div>\r
-                                        <div class="text-sm text-gray-500">Floor Nurse</div>\r
-                                    </td>\r
-                                    <td class="px-6 py-4 whitespace-nowrap">\r
-                                        <div class="text-sm text-gray-900">Cardiology</div>\r
-                                    </td>\r
-                                    <td class="px-6 py-4 whitespace-nowrap">\r
-                                        <div class="text-sm text-gray-900">amy.r_medicare.com</div>\r
-                                        <div class="text-sm text-gray-500">(555) 234-5678</div>\r
-                                    </td>\r
-                                    <td class="px-6 py-4 whitespace-nowrap">\r
-                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">\r
-                                            Active\r
-                                        </span>\r
-                                    </td>\r
-                                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">\r
-                                        <button class="text-blue-600 hover:text-blue-900 mr-3">Edit</button>\r
-                                        <button class="text-gray-600 hover:text-gray-900">Deactivate</button>\r
-                                    </td>\r
-                                </tr>\r
-\r
-                                <!-- Doctor 2 -->\r
-                                <tr class="hover:bg-gray-50">\r
-                                    <td class="px-6 py-4 whitespace-nowrap">\r
-                                        <div class="flex items-center">\r
-                                            <div class="flex-shrink-0 h-10 w-10">\r
-                                                <img class="h-10 w-10 rounded-full" src="https://via.placeholder.com/40" alt="">\r
-                                            </div>\r
-                                            <div class="ml-4">\r
-                                                <div class="text-sm font-medium text-gray-900">Dr. Michael Chen</div>\r
-                                                <div class="text-sm text-gray-500">ID: DOC-1002</div>\r
-                                            </div>\r
-                                        </div>\r
-                                    </td>\r
-                                    <td class="px-6 py-4 whitespace-nowrap">\r
-                                        <div class="text-sm text-gray-900">Pediatrician</div>\r
-                                        <div class="text-sm text-gray-500">Staff Doctor</div>\r
-                                    </td>\r
-                                    <td class="px-6 py-4 whitespace-nowrap">\r
-                                        <div class="text-sm text-gray-900">Pediatrics</div>\r
-                                    </td>\r
-                                    <td class="px-6 py-4 whitespace-nowrap">\r
-                                        <div class="text-sm text-gray-900">michael.c_medicare.com</div>\r
-                                        <div class="text-sm text-gray-500">(555) 345-6789</div>\r
-                                    </td>\r
-                                    <td class="px-6 py-4 whitespace-nowrap">\r
-                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">\r
-                                            On Leave\r
-                                        </span>\r
-                                    </td>\r
-                                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">\r
-                                        <button class="text-blue-600 hover:text-blue-900 mr-3">Edit</button>\r
-                                        <button class="text-gray-600 hover:text-gray-900">Activate</button>\r
-                                    </td>\r
-                                </tr>\r
-\r
-                                <!-- New Staff (Pending Activation) -->\r
-                                <tr class="hover:bg-gray-50 bg-blue-50">\r
-                                    <td class="px-6 py-4 whitespace-nowrap">\r
-                                        <div class="flex items-center">\r
-                                            <div class="flex-shrink-0 h-10 w-10">\r
-                                                <img class="h-10 w-10 rounded-full" src="https://via.placeholder.com/40" alt="">\r
-                                            </div>\r
-                                            <div class="ml-4">\r
-                                                <div class="text-sm font-medium text-gray-900">David Wilson</div>\r
-                                                <div class="text-sm text-gray-500">ID: NUR-2002</div>\r
-                                            </div>\r
-                                        </div>\r
-                                    </td>\r
-                                    <td class="px-6 py-4 whitespace-nowrap">\r
-                                        <div class="text-sm text-gray-900">Licensed Practical Nurse</div>\r
-                                        <div class="text-sm text-gray-500">New Hire</div>\r
-                                    </td>\r
-                                    <td class="px-6 py-4 whitespace-nowrap">\r
-                                        <div class="text-sm text-gray-900">Emergency</div>\r
-                                    </td>\r
-                                    <td class="px-6 py-4 whitespace-nowrap">\r
-                                        <div class="text-sm text-gray-900">david.w_medicare.com</div>\r
-                                        <div class="text-sm text-gray-500">(555) 456-7890</div>\r
-                                    </td>\r
-                                    <td class="px-6 py-4 whitespace-nowrap">\r
-                                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">\r
-                                            Pending Activation\r
-                                        </span>\r
-                                    </td>\r
-                                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">\r
-                                        <button class="text-blue-600 hover:text-blue-900 mr-3">Edit</button>\r
-                                        <button class="text-green-600 hover:text-green-900">Activate</button>\r
-                                    </td>\r
-                                </tr>\r
-                            </tbody>\r
-                        </table>\r
-                    </div>\r
-\r
-                    <!-- Pagination -->\r
-                    <div class="bg-gray-50 px-6 py-3 flex items-center justify-between border-t border-gray-200">\r
-                        <div class="flex-1 flex justify-between sm:hidden">\r
-                            <a href="#" class="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">\r
-                                Previous\r
-                            </a>\r
-                            <a href="#" class="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">\r
-                                Next\r
-                            </a>\r
-                        </div>\r
-                        <div class="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">\r
-                            <div>\r
-                                <p class="text-sm text-gray-700">\r
-                                    Showing <span class="font-medium">1</span> to <span class="font-medium">4</span> of <span class="font-medium">24</span> staff\r
-                                </p>\r
-                            </div>\r
-                            <div>\r
-                                <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">\r
-                                    <a href="#" class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">\r
-                                        <span class="sr-only">Previous</span>\r
-                                        <i class="fas fa-chevron-left"></i>\r
-                                    </a>\r
-                                    <a href="#" aria-current="page" class="z-10 bg-blue-50 border-blue-500 text-blue-600 relative inline-flex items-center px-4 py-2 border text-sm font-medium">\r
-                                        1\r
-                                    </a>\r
-                                    <a href="#" class="bg-white border-gray-300 text-gray-500 hover:bg-gray-50 relative inline-flex items-center px-4 py-2 border text-sm font-medium">\r
-                                        2\r
-                                    </a>\r
-                                    <a href="#" class="bg-white border-gray-300 text-gray-500 hover:bg-gray-50 relative inline-flex items-center px-4 py-2 border text-sm font-medium">\r
-                                        3\r
-                                    </a>\r
-                                    <a href="#" class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">\r
-                                        <span class="sr-only">Next</span>\r
-                                        <i class="fas fa-chevron-right"></i>\r
-                                    </a>\r
-                                </nav>\r
-                            </div>\r
-                        </div>\r
-                    </div>\r
-                </div>\r
-            </main>\r
+  <!-- Main Content Area -->\r
+  <main class="flex-1 overflow-y-auto p-6 bg-gray-100">\r
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">\r
+      <div>\r
+        <h1 class="text-2xl font-bold text-gray-800">Staff Management</h1>\r
+        <p class="text-sm text-gray-600 mt-1">Manage doctors, nurses, and administrative staff</p>\r
+      </div>\r
+      <div class="mt-4 md:mt-0 flex space-x-3">\r
+        <div class="relative">\r
+          <input type="text" placeholder="Search staff..."\r
+            class="pl-10 pr-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">\r
+          <i class="fas fa-search absolute left-3 top-3 text-gray-400"></i>\r
         </div>\r
-\r
-    <!-- Add/Edit Staff Modal -->\r
-    <div id="staffModal" class="fixed inset-0 overflow-y-auto z-50 hidden">\r
-        <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">\r
-            <div class="fixed inset-0 transition-opacity" aria-hidden="true">\r
-                <div class="absolute inset-0 bg-gray-500 opacity-75"></div>\r
-            </div>\r
-            <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full">\r
-                <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">\r
-                    <div class="sm:flex sm:items-start">\r
-                        <div class="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-blue-100 sm:mx-0 sm:h-10 sm:w-10">\r
-                            <i class="fas fa-user-plus text-blue-600"></i>\r
-                        </div>\r
-                        <div class="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left w-full">\r
-                            <h3 class="text-lg leading-6 font-medium text-gray-900" id="modalTitle">Add New Staff Member</h3>\r
-                            <div class="mt-4">\r
-                                <form class="space-y-4">\r
-                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">\r
-                                        <div>\r
-                                            <label for="firstName" class="block text-sm font-medium text-gray-700">First Name *</label>\r
-                                            <input type="text" id="firstName" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r
-                                        </div>\r
-                                        <div>\r
-                                            <label for="lastName" class="block text-sm font-medium text-gray-700">Last Name *</label>\r
-                                            <input type="text" id="lastName" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r
-                                        </div>\r
-                                    </div>\r
-\r
-                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">\r
-                                        <div>\r
-                                            <label for="role" class="block text-sm font-medium text-gray-700">Role *</label>\r
-                                            <select id="role" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">\r
-                                                <option value="">Select role</option>\r
-                                                <option value="doctor">Doctor</option>\r
-                                                <option value="nurse">Nurse</option>\r
-                                                <option value="administrator">Administrative Staff</option>\r
-                                                <option value="technician">Medical Technician</option>\r
-                                            </select>\r
-                                        </div>\r
-                                        <div id="specialtyContainer" class="hidden">\r
-                                            <label for="specialty" class="block text-sm font-medium text-gray-700">Specialty/Department *</label>\r
-                                            <select id="specialty" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">\r
-                                                <option value="">Select specialty</option>\r
-                                                <option value="cardiology">Cardiology</option>\r
-                                                <option value="pediatrics">Pediatrics</option>\r
-                                                <option value="orthopedics">Orthopedics</option>\r
-                                                <option value="neurology">Neurology</option>\r
-                                                <option value="emergency">Emergency</option>\r
-                                            </select>\r
-                                        </div>\r
-                                        <div id="licenseContainer" class="hidden">\r
-                                            <label for="license" class="block text-sm font-medium text-gray-700">License Number</label>\r
-                                            <input type="text" id="license" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r
-                                        </div>\r
-                                    </div>\r
-\r
-                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">\r
-                                        <div>\r
-                                            <label for="email" class="block text-sm font-medium text-gray-700">Email *</label>\r
-                                            <input type="email" id="email" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r
-                                        </div>\r
-                                        <div>\r
-                                            <label for="phone" class="block text-sm font-medium text-gray-700">Phone *</label>\r
-                                            <input type="tel" id="phone" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r
-                                        </div>\r
-                                    </div>\r
-\r
-                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">\r
-                                        <div>\r
-                                            <label for="hireDate" class="block text-sm font-medium text-gray-700">Hire Date *</label>\r
-                                            <input type="date" id="hireDate" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r
-                                        </div>\r
-                                        <div>\r
-                                            <label for="status" class="block text-sm font-medium text-gray-700">Status *</label>\r
-                                            <select id="status" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">\r
-                                                <option value="active">Active</option>\r
-                                                <option value="pending">Pending Activation</option>\r
-                                                <option value="on_leave">On Leave</option>\r
-                                                <option value="inactive">Inactive</option>\r
-                                            </select>\r
-                                        </div>\r
-                                    </div>\r
-\r
-                                    <div>\r
-                                        <label for="notes" class="block text-sm font-medium text-gray-700">Notes</label>\r
-                                        <textarea id="notes" rows="3" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"></textarea>\r
-                                    </div>\r
-\r
-                                    <div class="flex items-center">\r
-                                        <input id="sendWelcomeEmail" name="sendWelcomeEmail" type="checkbox" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">\r
-                                        <label for="sendWelcomeEmail" class="ml-2 block text-sm text-gray-700">Send welcome email with login instructions</label>\r
-                                    </div>\r
-                                </form>\r
-                            </div>\r
-                        </div>\r
-                    </div>\r
-                </div>\r
-                <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">\r
-                    <button type="button" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:ml-3 sm:w-auto sm:text-sm">\r
-                        Save Staff Member\r
-                    </button>\r
-                    <button type="button" onclick="closeStaffModal()" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">\r
-                        Cancel\r
-                    </button>\r
-                </div>\r
-            </div>\r
-        </div>\r
+        <button onclick="openStaffModal()"\r
+          class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center">\r
+          <i class="fas fa-plus mr-2"></i> Add Staff\r
+        </button>\r
+      </div>\r
     </div>\r
 \r
-    <script>\r
-        // Modal functions\r
-        function openStaffModal() {\r
-            document.getElementById('staffModal').classList.remove('hidden');\r
-        }\r
+    <!-- Staff Tabs -->\r
+    <div class="bg-white rounded-lg shadow mb-6">\r
+      <div class="border-b border-gray-200">\r
+        <nav class="flex -mb-px">\r
+          <a href="#" class="whitespace-nowrap py-4 px-6 border-b-2 border-blue-500 font-medium text-sm text-blue-600">\r
+            <i class="fas fa-user-md mr-2"></i>Doctors\r
+          </a>\r
+          <a href="#"\r
+            class="whitespace-nowrap py-4 px-6 border-b-2 border-transparent font-medium text-sm text-gray-500 hover:text-gray-700 hover:border-gray-300">\r
+            <i class="fas fa-user-nurse mr-2"></i>Nurses\r
+          </a>\r
+          <a href="#"\r
+            class="whitespace-nowrap py-4 px-6 border-b-2 border-transparent font-medium text-sm text-gray-500 hover:text-gray-700 hover:border-gray-300">\r
+            <i class="fas fa-user-tie mr-2"></i>Administrative\r
+          </a>\r
+          <a href="#"\r
+            class="whitespace-nowrap py-4 px-6 border-b-2 border-transparent font-medium text-sm text-gray-500 hover:text-gray-700 hover:border-gray-300">\r
+            <i class="fas fa-users mr-2"></i>All Staff\r
+          </a>\r
+        </nav>\r
+      </div>\r
 \r
-        function closeStaffModal() {\r
-            document.getElementById('staffModal').classList.add('hidden');\r
-        }\r
+      <!-- Staff List -->\r
+      <div class="overflow-x-auto">\r
+        <table class="min-w-full divide-y divide-gray-200">\r
+          <thead class="bg-gray-50">\r
+            <tr>\r
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">\r
+                Staff Member</th>\r
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">\r
+                Role</th>\r
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">\r
+                Specialty/Department</th>\r
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">\r
+                Contact</th>\r
+              <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">\r
+                Status</th>\r
+              <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">\r
+                Actions</th>\r
+            </tr>\r
+          </thead>\r
+          <tbody class="bg-white divide-y divide-gray-200">\r
+            <!-- Doctor 1 -->\r
+            <tr class="hover:bg-gray-50">\r
+              <td class="px-6 py-4 whitespace-nowrap">\r
+                <div class="flex items-center">\r
+                  <div class="flex-shrink-0 h-10 w-10">\r
+                    <img class="h-10 w-10 rounded-full" src="https://via.placeholder.com/40" alt="">\r
+                  </div>\r
+                  <div class="ml-4">\r
+                    <div class="text-sm font-medium text-gray-900">Dr. Sarah Johnson</div>\r
+                    <div class="text-sm text-gray-500">ID: DOC-1001</div>\r
+                  </div>\r
+                </div>\r
+              </td>\r
+              <td class="px-6 py-4 whitespace-nowrap">\r
+                <div class="text-sm text-gray-900">Cardiologist</div>\r
+                <div class="text-sm text-gray-500">Administrator</div>\r
+              </td>\r
+              <td class="px-6 py-4 whitespace-nowrap">\r
+                <div class="text-sm text-gray-900">Cardiology</div>\r
+              </td>\r
+              <td class="px-6 py-4 whitespace-nowrap">\r
+                <div class="text-sm text-gray-900">sarah.j_medicare.com</div>\r
+                <div class="text-sm text-gray-500">(555) 123-4567</div>\r
+              </td>\r
+              <td class="px-6 py-4 whitespace-nowrap">\r
+                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">\r
+                  Active\r
+                </span>\r
+              </td>\r
+              <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">\r
+                <button class="text-blue-600 hover:text-blue-900 mr-3">Edit</button>\r
+                <button class="text-gray-600 hover:text-gray-900">Deactivate</button>\r
+              </td>\r
+            </tr>\r
 \r
-        // Show/hide specialty and license fields based on role selection\r
-        document.getElementById('role').addEventListener('change', function() {\r
-            const role = this.value;\r
-            const specialtyContainer = document.getElementById('specialtyContainer');\r
-            const licenseContainer = document.getElementById('licenseContainer');\r
+            <!-- Nurse 1 -->\r
+            <tr class="hover:bg-gray-50">\r
+              <td class="px-6 py-4 whitespace-nowrap">\r
+                <div class="flex items-center">\r
+                  <div class="flex-shrink-0 h-10 w-10">\r
+                    <img class="h-10 w-10 rounded-full" src="https://via.placeholder.com/40" alt="">\r
+                  </div>\r
+                  <div class="ml-4">\r
+                    <div class="text-sm font-medium text-gray-900">Amy Rodriguez</div>\r
+                    <div class="text-sm text-gray-500">ID: NUR-2001</div>\r
+                  </div>\r
+                </div>\r
+              </td>\r
+              <td class="px-6 py-4 whitespace-nowrap">\r
+                <div class="text-sm text-gray-900">Registered Nurse</div>\r
+                <div class="text-sm text-gray-500">Floor Nurse</div>\r
+              </td>\r
+              <td class="px-6 py-4 whitespace-nowrap">\r
+                <div class="text-sm text-gray-900">Cardiology</div>\r
+              </td>\r
+              <td class="px-6 py-4 whitespace-nowrap">\r
+                <div class="text-sm text-gray-900">amy.r_medicare.com</div>\r
+                <div class="text-sm text-gray-500">(555) 234-5678</div>\r
+              </td>\r
+              <td class="px-6 py-4 whitespace-nowrap">\r
+                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">\r
+                  Active\r
+                </span>\r
+              </td>\r
+              <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">\r
+                <button class="text-blue-600 hover:text-blue-900 mr-3">Edit</button>\r
+                <button class="text-gray-600 hover:text-gray-900">Deactivate</button>\r
+              </td>\r
+            </tr>\r
 \r
-            if (role === 'doctor' || role === 'nurse') {\r
-                specialtyContainer.classList.remove('hidden');\r
-                licenseContainer.classList.remove('hidden');\r
-            } else {\r
-                specialtyContainer.classList.add('hidden');\r
-                licenseContainer.classList.add('hidden');\r
-            }\r
-        });\r
-    <\/script>\r
+            <!-- Doctor 2 -->\r
+            <tr class="hover:bg-gray-50">\r
+              <td class="px-6 py-4 whitespace-nowrap">\r
+                <div class="flex items-center">\r
+                  <div class="flex-shrink-0 h-10 w-10">\r
+                    <img class="h-10 w-10 rounded-full" src="https://via.placeholder.com/40" alt="">\r
+                  </div>\r
+                  <div class="ml-4">\r
+                    <div class="text-sm font-medium text-gray-900">Dr. Michael Chen</div>\r
+                    <div class="text-sm text-gray-500">ID: DOC-1002</div>\r
+                  </div>\r
+                </div>\r
+              </td>\r
+              <td class="px-6 py-4 whitespace-nowrap">\r
+                <div class="text-sm text-gray-900">Pediatrician</div>\r
+                <div class="text-sm text-gray-500">Staff Doctor</div>\r
+              </td>\r
+              <td class="px-6 py-4 whitespace-nowrap">\r
+                <div class="text-sm text-gray-900">Pediatrics</div>\r
+              </td>\r
+              <td class="px-6 py-4 whitespace-nowrap">\r
+                <div class="text-sm text-gray-900">michael.c_medicare.com</div>\r
+                <div class="text-sm text-gray-500">(555) 345-6789</div>\r
+              </td>\r
+              <td class="px-6 py-4 whitespace-nowrap">\r
+                <span\r
+                  class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">\r
+                  On Leave\r
+                </span>\r
+              </td>\r
+              <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">\r
+                <button class="text-blue-600 hover:text-blue-900 mr-3">Edit</button>\r
+                <button class="text-gray-600 hover:text-gray-900">Activate</button>\r
+              </td>\r
+            </tr>\r
 \r
-` }]
+            <!-- New Staff (Pending Activation) -->\r
+            <tr class="hover:bg-gray-50 bg-blue-50">\r
+              <td class="px-6 py-4 whitespace-nowrap">\r
+                <div class="flex items-center">\r
+                  <div class="flex-shrink-0 h-10 w-10">\r
+                    <img class="h-10 w-10 rounded-full" src="https://via.placeholder.com/40" alt="">\r
+                  </div>\r
+                  <div class="ml-4">\r
+                    <div class="text-sm font-medium text-gray-900">David Wilson</div>\r
+                    <div class="text-sm text-gray-500">ID: NUR-2002</div>\r
+                  </div>\r
+                </div>\r
+              </td>\r
+              <td class="px-6 py-4 whitespace-nowrap">\r
+                <div class="text-sm text-gray-900">Licensed Practical Nurse</div>\r
+                <div class="text-sm text-gray-500">New Hire</div>\r
+              </td>\r
+              <td class="px-6 py-4 whitespace-nowrap">\r
+                <div class="text-sm text-gray-900">Emergency</div>\r
+              </td>\r
+              <td class="px-6 py-4 whitespace-nowrap">\r
+                <div class="text-sm text-gray-900">david.w_medicare.com</div>\r
+                <div class="text-sm text-gray-500">(555) 456-7890</div>\r
+              </td>\r
+              <td class="px-6 py-4 whitespace-nowrap">\r
+                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">\r
+                  Pending Activation\r
+                </span>\r
+              </td>\r
+              <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">\r
+                <button class="text-blue-600 hover:text-blue-900 mr-3">Edit</button>\r
+                <button class="text-green-600 hover:text-green-900">Activate</button>\r
+              </td>\r
+            </tr>\r
+          </tbody>\r
+        </table>\r
+      </div>\r
+\r
+      <!-- Pagination -->\r
+      <div class="bg-gray-50 px-6 py-3 flex items-center justify-between border-t border-gray-200">\r
+        <div class="flex-1 flex justify-between sm:hidden">\r
+          <a href="#"\r
+            class="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">\r
+            Previous\r
+          </a>\r
+          <a href="#"\r
+            class="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">\r
+            Next\r
+          </a>\r
+        </div>\r
+        <div class="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">\r
+          <div>\r
+            <p class="text-sm text-gray-700">\r
+              Showing <span class="font-medium">1</span> to <span class="font-medium">4</span> of <span\r
+                class="font-medium">24</span> staff\r
+            </p>\r
+          </div>\r
+          <div>\r
+            <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">\r
+              <a href="#"\r
+                class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">\r
+                <span class="sr-only">Previous</span>\r
+                <i class="fas fa-chevron-left"></i>\r
+              </a>\r
+              <a href="#" aria-current="page"\r
+                class="z-10 bg-blue-50 border-blue-500 text-blue-600 relative inline-flex items-center px-4 py-2 border text-sm font-medium">\r
+                1\r
+              </a>\r
+              <a href="#"\r
+                class="bg-white border-gray-300 text-gray-500 hover:bg-gray-50 relative inline-flex items-center px-4 py-2 border text-sm font-medium">\r
+                2\r
+              </a>\r
+              <a href="#"\r
+                class="bg-white border-gray-300 text-gray-500 hover:bg-gray-50 relative inline-flex items-center px-4 py-2 border text-sm font-medium">\r
+                3\r
+              </a>\r
+              <a href="#"\r
+                class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">\r
+                <span class="sr-only">Next</span>\r
+                <i class="fas fa-chevron-right"></i>\r
+              </a>\r
+            </nav>\r
+          </div>\r
+        </div>\r
+      </div>\r
+    </div>\r
+  </main>\r
+</div>\r
+\r
+<!-- Add/Edit Staff Modal -->\r
+<div id="staffModal" class="fixed inset-0 overflow-y-auto z-50 hidden">\r
+  <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">\r
+    <div class="fixed inset-0 transition-opacity" aria-hidden="true">\r
+      <div class="absolute inset-0 bg-gray-500 opacity-75"></div>\r
+    </div>\r
+    <div\r
+      class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full">\r
+      <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">\r
+        <div class="sm:flex sm:items-start">\r
+          <div\r
+            class="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-blue-100 sm:mx-0 sm:h-10 sm:w-10">\r
+            <i class="fas fa-user-plus text-blue-600"></i>\r
+          </div>\r
+          <div class="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left w-full">\r
+            <h3 class="text-lg leading-6 font-medium text-gray-900" id="modalTitle">Add New Staff Member</h3>\r
+            <div class="mt-4">\r
+              <form class="space-y-4">\r
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">\r
+                  <div>\r
+                    <label for="firstName" class="block text-sm font-medium text-gray-700">First Name *</label>\r
+                    <input type="text" id="firstName"\r
+                      class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r
+                  </div>\r
+                  <div>\r
+                    <label for="lastName" class="block text-sm font-medium text-gray-700">Last Name *</label>\r
+                    <input type="text" id="lastName"\r
+                      class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r
+                  </div>\r
+                </div>\r
+\r
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">\r
+                  <div>\r
+                    <label for="role" class="block text-sm font-medium text-gray-700">Role *</label>\r
+                    <select id="role"\r
+                      class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">\r
+                      <option value="">Select role</option>\r
+                      <option value="doctor">Doctor</option>\r
+                      <option value="nurse">Nurse</option>\r
+                      <option value="administrator">Administrative Staff</option>\r
+                      <option value="technician">Medical Technician</option>\r
+                    </select>\r
+                  </div>\r
+                  <div id="specialtyContainer" class="hidden">\r
+                    <label for="specialty" class="block text-sm font-medium text-gray-700">Specialty/Department\r
+                      *</label>\r
+                    <select id="specialty"\r
+                      class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">\r
+                      <option value="">Select specialty</option>\r
+                      <option value="cardiology">Cardiology</option>\r
+                      <option value="pediatrics">Pediatrics</option>\r
+                      <option value="orthopedics">Orthopedics</option>\r
+                      <option value="neurology">Neurology</option>\r
+                      <option value="emergency">Emergency</option>\r
+                    </select>\r
+                  </div>\r
+                  <div id="licenseContainer" class="hidden">\r
+                    <label for="license" class="block text-sm font-medium text-gray-700">License Number</label>\r
+                    <input type="text" id="license"\r
+                      class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r
+                  </div>\r
+                </div>\r
+\r
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">\r
+                  <div>\r
+                    <label for="email" class="block text-sm font-medium text-gray-700">Email *</label>\r
+                    <input type="email" id="email"\r
+                      class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r
+                  </div>\r
+                  <div>\r
+                    <label for="phone" class="block text-sm font-medium text-gray-700">Phone *</label>\r
+                    <input type="tel" id="phone"\r
+                      class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r
+                  </div>\r
+                </div>\r
+\r
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">\r
+                  <div>\r
+                    <label for="hireDate" class="block text-sm font-medium text-gray-700">Hire Date *</label>\r
+                    <input type="date" id="hireDate"\r
+                      class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">\r
+                  </div>\r
+                  <div>\r
+                    <label for="status" class="block text-sm font-medium text-gray-700">Status *</label>\r
+                    <select id="status"\r
+                      class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">\r
+                      <option value="active">Active</option>\r
+                      <option value="pending">Pending Activation</option>\r
+                      <option value="on_leave">On Leave</option>\r
+                      <option value="inactive">Inactive</option>\r
+                    </select>\r
+                  </div>\r
+                </div>\r
+\r
+                <div>\r
+                  <label for="notes" class="block text-sm font-medium text-gray-700">Notes</label>\r
+                  <textarea id="notes" rows="3"\r
+                    class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"></textarea>\r
+                </div>\r
+\r
+                <div class="flex items-center">\r
+                  <input id="sendWelcomeEmail" name="sendWelcomeEmail" type="checkbox"\r
+                    class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">\r
+                  <label for="sendWelcomeEmail" class="ml-2 block text-sm text-gray-700">Send welcome email with login\r
+                    instructions</label>\r
+                </div>\r
+              </form>\r
+            </div>\r
+          </div>\r
+        </div>\r
+      </div>\r
+      <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">\r
+        <button type="button"\r
+          class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:ml-3 sm:w-auto sm:text-sm">\r
+          Save Staff Member\r
+        </button>\r
+        <button type="button" onclick="closeStaffModal()"\r
+          class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">\r
+          Cancel\r
+        </button>\r
+      </div>\r
+    </div>\r
+  </div>\r
+</div>\r
+\r
+<script>\r
+  // Modal functions\r
+  function openStaffModal() {\r
+    document.getElementById('staffModal').classList.remove('hidden');\r
+  }\r
+\r
+  function closeStaffModal() {\r
+    document.getElementById('staffModal').classList.add('hidden');\r
+  }\r
+\r
+  // Show/hide specialty and license fields based on role selection\r
+  document.getElementById('role').addEventListener('change', function () {\r
+    const role = this.value;\r
+    const specialtyContainer = document.getElementById('specialtyContainer');\r
+    const licenseContainer = document.getElementById('licenseContainer');\r
+\r
+    if (role === 'doctor' || role === 'nurse') {\r
+      specialtyContainer.classList.remove('hidden');\r
+      licenseContainer.classList.remove('hidden');\r
+    } else {\r
+      specialtyContainer.classList.add('hidden');\r
+      licenseContainer.classList.add('hidden');\r
+    }\r
+  });\r
+<\/script>` }]
   }], null, null);
 })();
 (() => {
@@ -59060,12 +61853,16 @@ var TaskComponent = class _TaskComponent {
 // src/app/app.routes.ts
 var APP_PPATH = "";
 var HOME_PATH = "home";
+var PATIENT_PATH = "patient";
+var PATIENT_NEW_PATH = "new-patient";
+var PATIENT_MEDICAL_HISTORY_PATH = "medical-history";
+var PATIENT_MEDICAL_HISTORY_NEW_PATH = "new-medical-history";
+var REVIEW_PATIENT_PATH = "review-patient";
 var BILLING_PATH = "billing";
 var TASK_PATH = "task";
 var STAFF_PATH = "staff";
 var UI_PATH = "ui";
 var TEST_PATH = "test";
-var NEW_PATIENT = "new-patient";
 var routes = [
   {
     path: APP_PPATH,
@@ -59080,8 +61877,12 @@ var routes = [
         component: DashboardComponent
       },
       {
-        path: NEW_PATIENT,
+        path: PATIENT_PATH,
         component: PatientComponent
+      },
+      {
+        path: PATIENT_NEW_PATH,
+        component: NewPatientComponent
       },
       {
         path: BILLING_PATH,
@@ -59094,6 +61895,18 @@ var routes = [
       {
         path: STAFF_PATH,
         component: StaffComponent
+      },
+      {
+        path: PATIENT_MEDICAL_HISTORY_PATH,
+        component: MedicalHistoryComponent
+      },
+      {
+        path: PATIENT_MEDICAL_HISTORY_NEW_PATH,
+        component: NewMedicalHistoryComponent
+      },
+      {
+        path: REVIEW_PATIENT_PATH,
+        component: ReviewPatientComponent
       }
     ]
   },
