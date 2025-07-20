@@ -86,7 +86,7 @@ export const routes: Routes = [
   },
   {
     path: TEST_PATH,
-    component:AdmWeekViewCalendarComponent
-    // component: TestComponent
+    // component:AdmWeekViewCalendarComponent
+    component: TestComponent
   }
 ];

@@ -45,3 +45,6 @@ build/
 /src/main/resources/static/browser/media/fa-solid-900.woff2
 /src/main/resources/static/browser/media/fa-v4compatibility.ttf
 /src/main/resources/static/browser/media/fa-v4compatibility.woff2
+src/medIt-front/package.json
+src/medIt-front/package-lock.json
+/src/medIt-front/.angular/cache
